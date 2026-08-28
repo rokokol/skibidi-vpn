@@ -1,0 +1,6 @@
+---
+certs_domain: ""                 # the wildcard base, e.g. example.org
+certs_email: ""
+certs_cf_token: ""               # from the vault, scoped Zone:DNS:Edit on one zone
+certs_home: /root/.acme.sh
+certs_install_dir: /etc/ssl/skibidi-vpn

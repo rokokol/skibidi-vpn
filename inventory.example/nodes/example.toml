@@ -1,0 +1,30 @@
+# Copy to the private nodes directory as <name>.toml and chmod 600.
+# The file name is the node name; nothing else holds a list of nodes.
+#
+# The same file is read by the xui-admin skill, so panel and token live here too
+# — one registry, two consumers. This inventory strips the token from hostvars so
+# it never reaches `ansible-inventory --list` output.
+
+ansible_host = "198.51.100.7"
+ansible_user = "root"
+# ansible_become = true          # when logging in as a non-root user
+
+# Roles are selected by what a node declares itself to be, never by its name
+capabilities = ["master"]
+
+# Panel — consumed by the skill, and by the xui role for the bind check
+panel = "https://100.72.0.4:16099/randomBasePath/"
+token = "replace-me"
+verify_tls = false
+xui_listen_ip = "100.72.0.4"
+xui_panel_port = 16099
+xui_base_path = "/randomBasePath/"
+
+# Certificates. Leave certs_domain empty to skip the role entirely
+certs_domain = "example.org"
+certs_email = "admin@example.org"
+
+# Where breakage and summaries are mailed. No credential is needed: the intake
+# authorises by the node's address, so nothing secret lives on the node
+alert_to = "vpn@example.org"
+smtp = "mail.example.org:25025"

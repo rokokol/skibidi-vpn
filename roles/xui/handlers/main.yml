@@ -1,0 +1,5 @@
+---
+- name: Restart x-ui
+  ansible.builtin.systemd_service:
+    name: x-ui
+    state: restarted

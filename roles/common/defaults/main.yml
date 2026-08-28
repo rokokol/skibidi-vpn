@@ -1,0 +1,17 @@
+---
+# Queue discipline and congestion control. fq is what BBR is designed against;
+# pairing them is the documented combination, not a tweak
+common_qdisc: fq
+common_congestion_control: bbr
+
+# The real ceiling on a busy node is the conntrack table, not file descriptors
+common_conntrack_max: 262144
+
+# Stock is 432000 (five days), so one orphaned connection holds a slot for five
+# days. Xray closes idle connections in minutes, so nothing legitimate here is
+# idle for a day; this only shortens how long the debris lingers
+common_conntrack_established_timeout: 86400
+
+# One outgoing identity. A node that sometimes leaves over IPv6 and sometimes
+# over IPv4 has two reputations, and only one of them was ever checked
+common_prefer_ipv4: true

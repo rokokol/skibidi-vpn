@@ -1,0 +1,14 @@
+---
+# Only these three answer from the internet. Everything the panel and the tailnet
+# need arrives on the tunnel interface instead
+firewall_tcp_open: [22, 80, 443]
+firewall_udp_open: []
+
+firewall_tunnel_interface: tailscale0
+
+# Tailscale's direct path leaves from this port. Dropping it forces every peer
+# through DERP, which costs latency and buys the thing this fleet is built on:
+# the address that answers Reality on 443 must not also emit WireGuard, or the
+# two are trivially the same host
+firewall_hide_tailscale_direct: true
+firewall_tailscale_port: 41641

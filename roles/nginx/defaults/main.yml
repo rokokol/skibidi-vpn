@@ -1,0 +1,7 @@
+---
+# A live 443 next to a silent 80 is an odd shape for a scanner to find, so 80
+# answers the way an ordinary site would
+nginx_redirect_target: "https://$host$request_uri"
+nginx_probe_echo: false
+nginx_probe_echo_path: /skibidi/echo
+nginx_probe_echo_allow: []       # public egress addresses, not tailnet ones

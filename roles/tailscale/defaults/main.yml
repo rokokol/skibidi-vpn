@@ -1,0 +1,5 @@
+---
+tailscale_auth_key: ""          # from the vault; never a literal here
+tailscale_hostname: "{{ inventory_hostname }}"
+tailscale_accept_routes: false
+tailscale_ssh: false

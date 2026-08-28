@@ -1,0 +1,33 @@
+---
+# A real Ubuntu VM, not a container: systemd, ufw and the tunnel are three of the
+# things worth testing here, and none of them behave inside a container.
+# Needs /dev/kvm — without it QEMU falls back to software emulation and a run
+# that should take minutes takes long enough to look like a hang
+driver:
+  name: vagrant
+  provider:
+    name: libvirt
+
+platforms:
+  - name: skibidi-node
+    box: generic/ubuntu2404
+    memory: 1024
+    cpus: 1
+
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ../../roles
+  inventory:
+    host_vars:
+      skibidi-node:
+        # The VM has no tunnel, so the panel binds to loopback and the bind
+        # assertion still means something: it proves the panel is not on 0.0.0.0
+        xui_listen_ip: "127.0.0.1"
+        xui_panel_port: 2053
+        xui_base_path: "/molecule/"
+        firewall_hide_tailscale_direct: false
+        certs_domain: ""
+
+verifier:
+  name: ansible

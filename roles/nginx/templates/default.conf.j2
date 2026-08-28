@@ -1,0 +1,35 @@
+{{ ansible_managed | comment }}
+{% if nginx_probe_echo %}
+# allow/deny next to a `return` does nothing: the access phase runs after the
+# rewrite phase, so the response is already sent before the address is checked.
+# A geo map is evaluated early enough to decide
+geo $skibidi_echo_allowed {
+    default 0;
+{% for address in nginx_probe_echo_allow %}
+    {{ address }} 1;
+{% endfor %}
+}
+{% endif %}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+{% if nginx_probe_echo %}
+    location = {{ nginx_probe_echo_path }} {
+        if ($skibidi_echo_allowed = 0) {
+            return 301 {{ nginx_redirect_target }};
+        }
+        default_type text/plain;
+        return 200 "$remote_addr\n";
+    }
+{% endif %}
+
+    # A server-level `return` is evaluated before a location is chosen, so it
+    # would swallow every request including the one above. The redirect has to
+    # live in a location for anything else on this server to be reachable
+    location / {
+        return 301 {{ nginx_redirect_target }};
+    }
+}

@@ -1,0 +1,63 @@
+---
+- name: Install the packages the panel and our checks need
+  ansible.builtin.apt:
+    name: [curl, sqlite3, tar]
+    state: present
+    update_cache: true
+
+- name: Report the installed panel version
+  ansible.builtin.command: x-ui version
+  register: xui_installed
+  changed_when: false
+  failed_when: false
+
+# Pinned rather than latest: a node and its master must run the same version for
+# node mode to work at all, so "whatever is newest today" desynchronises the pair
+- name: Install 3x-ui
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
+      | bash -s {{ xui_version }}
+    executable: /bin/bash
+  when: xui_version not in (xui_installed.stdout | default(''))
+  changed_when: true
+
+- name: Back up the database before touching its settings
+  ansible.builtin.command:
+    cmd: cp --preserve=all {{ xui_db }} {{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}
+    creates: "{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+
+# The panel must answer on the tunnel address only. Binding it to 0.0.0.0 and
+# relying on the firewall alone means one ufw mistake exposes the whole fleet:
+# the panel holds every client secret and the Reality private keys
+- name: Bind the panel to the tunnel address and its own base path
+  ansible.builtin.command:
+    cmd: >-
+      x-ui setting
+      -port {{ xui_panel_port }}
+      -webBasePath {{ xui_base_path }}
+      -listenIP {{ xui_listen_ip }}
+  register: xui_setting
+  changed_when: "'success' in (xui_setting.stdout | default('') | lower)"
+  notify: Restart x-ui
+
+- name: Enable and start the panel
+  ansible.builtin.systemd_service:
+    name: x-ui
+    enabled: true
+    state: started
+
+- name: Prove the panel listens where it was told and nowhere else
+  ansible.builtin.shell:
+    cmd: set -o pipefail && ss -ltnH "sport = :{{ xui_panel_port }}" | awk '{print $4}'
+    executable: /bin/bash
+  register: xui_listeners
+  changed_when: false
+
+- name: Fail if the panel is reachable from outside the tunnel
+  ansible.builtin.assert:
+    that: xui_listeners.stdout_lines | reject('search', xui_listen_ip) | list | length == 0
+    fail_msg: >-
+      panel listens on {{ xui_listeners.stdout_lines | join(', ') }}, expected only
+      {{ xui_listen_ip }} — a panel on a public address exposes every client secret

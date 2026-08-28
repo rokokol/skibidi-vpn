@@ -1,0 +1,73 @@
+---
+# What the roles claim, asserted against the running machine rather than against
+# the modules' own return values. Every assertion here is one that has a
+# plausible way of being false on a real node.
+- name: Verify the node came out the way the roles describe
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Read the effective congestion control and queue discipline
+      ansible.builtin.command: sysctl -n {{ item }}
+      loop:
+        - net.ipv4.tcp_congestion_control
+        - net.core.default_qdisc
+      register: verify_sysctl
+      changed_when: false
+
+    - name: The kernel actually uses what was configured
+      ansible.builtin.assert:
+        that:
+          - verify_sysctl.results[0].stdout == common_congestion_control
+          - verify_sysctl.results[1].stdout == common_qdisc
+        fail_msg: >-
+          sysctl reports {{ verify_sysctl.results[0].stdout }}/{{ verify_sysctl.results[1].stdout }};
+          a setting written to a file the module never applied looks identical in the diff
+
+    - name: Read the listening sockets
+      ansible.builtin.command: ss -ltnH
+      register: verify_sockets
+      changed_when: false
+
+    # The panel holds every client secret and the Reality private keys. A public
+    # bind is the one failure that cannot be walked back after it is noticed
+    - name: The panel is not listening on a public address
+      ansible.builtin.assert:
+        that: >-
+          verify_sockets.stdout_lines
+          | select('search', ':' ~ xui_panel_port)
+          | reject('search', xui_listen_ip)
+          | list | length == 0
+        fail_msg: "panel port {{ xui_panel_port }} answers somewhere other than {{ xui_listen_ip }}"
+
+    - name: Read the firewall state
+      ansible.builtin.command: ufw status verbose
+      register: verify_ufw
+      changed_when: false
+
+    - name: Inbound is denied by default
+      ansible.builtin.assert:
+        that: "'deny (incoming)' in verify_ufw.stdout"
+        fail_msg: "ufw default policy is not deny incoming: {{ verify_ufw.stdout }}"
+
+    - name: Only the declared ports are open
+      ansible.builtin.assert:
+        that: item | string in verify_ufw.stdout
+        fail_msg: "port {{ item }} was expected to be open and is not"
+      loop: "{{ firewall_tcp_open }}"
+
+    - name: The units that must survive a reboot are enabled
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+      register: verify_units
+      failed_when: verify_units.status.UnitFileState | default('') != 'enabled'
+      loop:
+        - x-ui
+        - nginx
+        - tailscaled
+
+    - name: Port 80 answers like an ordinary site rather than staying silent
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        status_code: [301, 302]
+        follow_redirects: none

@@ -1,0 +1,12 @@
+---
+- name: Build and maintain the VPN nodes
+  hosts: nodes
+  become: "{{ ansible_become | default(false) }}"
+  roles:
+    - common
+    - firewall
+    - tailscale
+    - xui
+    - role: certs
+      when: certs_domain | default('') | length > 0
+    - nginx

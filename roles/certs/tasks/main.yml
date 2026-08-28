@@ -1,0 +1,68 @@
+---
+- name: Install what acme.sh needs
+  ansible.builtin.apt:
+    name: [curl, socat, cron]
+    state: present
+    update_cache: true
+
+- name: Install acme.sh
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      curl -fsSL https://get.acme.sh | sh -s email={{ certs_email }}
+    executable: /bin/bash
+    creates: "{{ certs_home }}/acme.sh"
+
+# Scoped to one zone and, where the provider allows it, to this node's address.
+# A token that can edit every zone is the same blast radius as the registrar
+- name: Store the DNS API token
+  ansible.builtin.copy:
+    dest: /etc/acme-cf-token
+    content: "{{ certs_cf_token }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Create the install directory
+  ansible.builtin.file:
+    path: "{{ certs_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# DNS-01 rather than HTTP-01 on purpose: it issues a wildcard, so only the
+# wildcard reaches Certificate Transparency and the individual hostnames this
+# fleet uses stay out of a public log
+- name: Issue the wildcard certificate
+  ansible.builtin.command:
+    cmd: >-
+      {{ certs_home }}/acme.sh --issue --dns dns_cf
+      -d {{ certs_domain }} -d *.{{ certs_domain }}
+      --server letsencrypt
+    creates: "{{ certs_home }}/*.{{ certs_domain }}_ecc/fullchain.cer"
+  environment:
+    CF_Token: "{{ certs_cf_token }}"
+  no_log: true
+
+- name: Install the certificate where the services read it
+  ansible.builtin.command:
+    cmd: >-
+      {{ certs_home }}/acme.sh --install-cert -d {{ certs_domain }} --ecc
+      --key-file {{ certs_install_dir }}/key.pem
+      --fullchain-file {{ certs_install_dir }}/fullchain.pem
+      --reloadcmd "systemctl reload nginx || true"
+    creates: "{{ certs_install_dir }}/fullchain.pem"
+
+# acme.sh installs its own cron entry; this asserts it rather than adding a
+# second renewal path that would race the first
+- name: Prove renewal is scheduled
+  ansible.builtin.command: crontab -l
+  register: certs_cron
+  changed_when: false
+
+- name: Fail if nothing will renew the certificate
+  ansible.builtin.assert:
+    that: "'acme.sh' in certs_cron.stdout"
+    fail_msg: acme.sh installed no renewal cron entry; the certificate would expire silently

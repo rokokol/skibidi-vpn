@@ -1,0 +1,49 @@
+---
+- name: Load kernel modules needed by the sysctl settings
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/skibidi-vpn.conf
+    content: |
+      tcp_{{ common_congestion_control }}
+      nf_conntrack
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Load kernel modules
+
+# sysctl -w on a module that is not loaded yet fails, and the setting is then
+# missing until the next boot rather than at the next boot
+- name: Load the modules now so the settings below can apply
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - "tcp_{{ common_congestion_control }}"
+    - nf_conntrack
+
+- name: Apply network and conntrack settings
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-skibidi-vpn.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { key: net.core.default_qdisc, value: "{{ common_qdisc }}" }
+    - { key: net.ipv4.tcp_congestion_control, value: "{{ common_congestion_control }}" }
+    - { key: net.netfilter.nf_conntrack_max, value: "{{ common_conntrack_max }}" }
+    - key: net.netfilter.nf_conntrack_tcp_timeout_established
+      value: "{{ common_conntrack_established_timeout }}"
+
+# Linux prefers IPv6 for outgoing connections wherever it has one, so a node with
+# an unused IPv6 address silently egresses from an address nothing was checked
+# against — reputation, geolocation and allowlists all differ
+- name: Prefer IPv4 for outgoing connections
+  ansible.builtin.lineinfile:
+    path: /etc/gai.conf
+    regexp: '^\s*precedence\s+::ffff:0:0/96'
+    line: "precedence ::ffff:0:0/96  100"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: common_prefer_ipv4

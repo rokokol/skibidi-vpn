@@ -1,0 +1,14 @@
+---
+# A node and its master must run the same panel and core version for node mode
+# to work, so this is pinned and moved deliberately, never tracked to latest
+xui_version: "3.7.0"
+
+xui_db: /etc/x-ui/x-ui.db
+
+# The panel answers on the tunnel address only; set per node from its own file
+xui_listen_ip: "127.0.0.1"
+xui_panel_port: 2053
+
+# The panel serves its API and UI under this path. A wrong one answers 200 with
+# an empty body, which reads as success to anything checking only a status field
+xui_base_path: "/"

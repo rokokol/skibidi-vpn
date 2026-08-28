@@ -1,0 +1,53 @@
+---
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+
+- name: Default to denying inbound and allowing outbound
+  community.general.ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+
+- name: Open the public TCP ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ firewall_tcp_open }}"
+
+- name: Open the public UDP ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: udp
+  loop: "{{ firewall_udp_open }}"
+
+# The panel binds to the tunnel only, but a firewall that also says so means a
+# panel accidentally bound to 0.0.0.0 is still not reachable from the internet
+- name: Allow everything arriving on the tunnel interface
+  community.general.ufw:
+    rule: allow
+    direction: in
+    interface: "{{ firewall_tunnel_interface }}"
+
+- name: Drop Tailscale's direct path so the exit address emits no WireGuard
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    # Must sit above the RELATED,ESTABLISHED accept, or established flows slip
+    # past it and the leak continues for every already-open peer
+    insertbefore: '^-A ufw-before-output -m conntrack --ctstate RELATED,ESTABLISHED'
+    marker: "# {mark} skibidi-vpn tailscale egress"
+    block: |
+      -A ufw-before-output -o {{ ansible_default_ipv4.interface }} -p udp --sport {{ firewall_tailscale_port }} -j DROP
+    backup: true
+  when: firewall_hide_tailscale_direct
+  notify: Reload ufw
+
+- name: Enable ufw
+  community.general.ufw:
+    state: enabled

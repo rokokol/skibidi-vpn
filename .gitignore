@@ -1,0 +1,22 @@
+# The private node registry never lives here. inventory.example/ is the template
+inventory/nodes/
+
+# Secret-bearing artefacts. These are deliberately narrow: a blanket *secret*
+# once swallowed tests/no-secrets.sh, so the guard against leaks was itself
+# untracked and the flake check was the only thing that noticed
+*.vault
+*.db
+*.db-*
+*.pem
+*.key
+*.p12
+secrets/
+**/*.token
+**/*credentials*
+
+*.retry
+*.bak
+__pycache__/
+.venv/
+result
+result-*
