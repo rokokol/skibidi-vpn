@@ -59,7 +59,3 @@ nix flake check
 | `xui` | the pinned panel, bound to the tunnel address, asserted afterwards |
 | `certs` | a wildcard certificate over DNS-01, so only the wildcard reaches Certificate Transparency |
 | `nginx` | port 80, and the optional egress-address echo |
-
-## Licence
-
-MIT
