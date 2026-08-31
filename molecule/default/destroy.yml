@@ -1,0 +1,31 @@
+---
+- name: Destroy the throwaway node
+  hosts: localhost
+  gather_facts: false
+  vars:
+    workdir: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+
+  tasks:
+    - name: Read the QEMU pid, if the VM was ever started
+      ansible.builtin.slurp:
+        src: "{{ workdir }}/qemu.pid"
+      register: pidfile
+      failed_when: false
+
+    - name: Stop the VM
+      ansible.builtin.command:
+        argv: [kill, "{{ (pidfile.content | b64decode | trim) }}"]
+      when: pidfile.content is defined
+      failed_when: false
+      changed_when: true
+
+    # The disk is an overlay on the cached image, so this frees the run's
+    # writes and leaves the download for the next one
+    - name: Remove the disk and the seed
+      ansible.builtin.file:
+        path: "{{ workdir }}/{{ item }}"
+        state: absent
+      loop:
+        - disk.qcow2
+        - seed.iso
+        - qemu.pid

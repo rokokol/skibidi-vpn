@@ -6,7 +6,19 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Added
 
-- Node registry as a folder of TOML files, one per node, shared with the `xui-admin` skill so there is a single registry with two consumers. Groups come from each node's declared capabilities, so no role selects a node by name
+- Node registry as a folder of TOML files, one per node, shared with the `3x-ui-admin-skill` so there is a single registry with two consumers. Groups come from each node's declared capabilities, so no role selects a node by name
 - Roles `common`, `firewall`, `tailscale`, `xui`, `certs` and `nginx`: kernel and conntrack settings with one outgoing address family, a ufw policy that hides the tunnel's direct path, a pinned panel bound to the tunnel address and asserted afterwards, a DNS-01 wildcard certificate so only the wildcard reaches Certificate Transparency, and a port 80 that answers like an ordinary site
 - `tests/no-secrets.sh`, a gate against a secret reaching a tracked file, proven by planting one
 - Nix dev shell and a flake check running shellcheck
+- A molecule scenario that boots a real Ubuntu VM from a cloud image, applies every role, requires a second run to change nothing, and asserts the result against the running machine. QEMU is driven directly rather than through Vagrant, whose libvirt provider is a plugin nixpkgs does not carry
+- Ports that answer only named sources, so a subscription endpoint fronted by a CDN can be declared rather than hand-maintained
+- The full kernel tuning the fleet was running with: socket buffers sized for QUIC, TCP autotuning ceilings for a long path, MTU probing, and a bound on unsent bytes per socket
+
+### Fixed
+
+- Roles no longer break a node that already exists. nginx took over the file already serving port 80 instead of adding a second `default_server`; certs install where the panel actually reads them and restart it on renewal, since it reads its certificate only at startup; the firewall replaces an existing drop rule instead of appending a duplicate; and `common` removes the drop-in names this fleet used before rather than adding a third file declaring the same keys
+- The panel is no longer reinstalled on every run: the version gate compared against `x-ui version`, which is not a subcommand and prints the help menu
+- The panel binding is applied by the binary rather than by the management script, which exits 0 for a subcommand it does not have — the settings were silently never applied — and the database is read back afterwards to prove it took
+- A backup of the panel database is taken only when a setting actually changes, instead of accumulating copies of an unchanged file, each holding every client credential
+- Installing Tailscale refreshes the package indexes rather than trusting a cache older than the repository it just added
+- nginx disables the site the distribution enables, which also claims `default_server` on port 80 and makes the configuration fatal on a fresh machine

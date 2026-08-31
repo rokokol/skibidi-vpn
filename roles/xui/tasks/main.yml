@@ -21,13 +21,19 @@
   failed_when: false
 
 # Pinned rather than latest: a node and its master must run the same version for
-# node mode to work at all, so "whatever is newest today" desynchronises the pair
+# node mode to work at all, so "whatever is newest today" desynchronises the pair.
+#
+# The argument carries the `v` because the installer puts it into the release
+# URL verbatim, while the binary reports its version without one - so the
+# variable holds the bare number and the prefix is added here. Passing the bare
+# number made the installer 404, which only showed up in the VM test: on a node
+# that already ran this version, the install step never runs at all
 - name: Install 3x-ui
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail &&
-      curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
-      | bash -s {{ xui_version }}
+      curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/main/install.sh
+      | bash -s v{{ xui_version }}
     executable: /bin/bash
   when: (xui_installed.stdout | default('') | trim) != xui_version
   changed_when: true
@@ -71,16 +77,55 @@
 # The panel must answer on the tunnel address only. Binding it to 0.0.0.0 and
 # relying on the firewall alone means one ufw mistake exposes the whole fleet:
 # the panel holds every client secret and the Reality private keys
+# The binary, not the wrapper. `x-ui` is the management script, and `setting` is
+# not one of its subcommands - it prints its menu and exits 0, so the task reads
+# as successful while the panel keeps whatever the installer generated. The same
+# trap as `x-ui version`, and it stayed invisible on nodes whose settings were
+# already correct, because then this task never runs
 - name: Bind the panel to the tunnel address and its own base path
   ansible.builtin.command:
-    cmd: >-
-      x-ui setting
-      -port {{ xui_panel_port }}
-      -webBasePath {{ xui_base_path }}
-      -listenIP {{ xui_listen_ip }}
+    argv:
+      - /usr/local/x-ui/x-ui
+      - setting
+      - -port
+      - "{{ xui_panel_port }}"
+      - -webBasePath
+      - "{{ xui_base_path }}"
+      - -listenIP
+      - "{{ xui_listen_ip }}"
   when: not xui_binding_matches
   changed_when: true
   notify: Restart x-ui
+
+# The command above cannot report whether it did anything, so the database is
+# asked again. Without this, a wrapper that swallows its arguments looks exactly
+# like a successful configuration
+- name: Read the binding back
+  ansible.builtin.command:
+    argv:
+      - sqlite3
+      - "{{ xui_db }}"
+      - >-
+        select coalesce(max(case when key='webPort' then value end), '') || '|' ||
+               coalesce(max(case when key='webBasePath' then value end), '') || '|' ||
+               coalesce(max(case when key='webListen' then value end), '')
+        from settings
+  register: xui_after
+  changed_when: false
+  check_mode: false
+  when: not xui_binding_matches
+
+- name: Fail when the panel did not take the binding
+  ansible.builtin.assert:
+    that:
+      - (xui_after.stdout | trim).split('|') == [
+          xui_panel_port | string, xui_base_path, xui_listen_ip]
+    fail_msg: >-
+      asked for {{ xui_panel_port }}|{{ xui_base_path }}|{{ xui_listen_ip }}
+      but the database holds {{ xui_after.stdout | trim }}
+  when:
+    - not xui_binding_matches
+    - not ansible_check_mode
 
 - name: Enable and start the panel
   ansible.builtin.systemd_service:

@@ -31,6 +31,14 @@
             ))
             qemu
             libvirt
+            # A cloud image plus a seed ISO is the whole VM: cloud-utils builds
+            # the seed, xorriso is what it shells out to. vagrant is deliberately
+            # absent - its libvirt provider is a plugin nixpkgs does not carry,
+            # so the scenario drives QEMU directly instead
+            cloud-utils
+            xorriso
+            curl
+            openssh
             shellcheck
           ];
 

@@ -6,6 +6,15 @@
   hosts: all
   gather_facts: true
 
+  # The verifier runs no roles, so their defaults are not in scope, and reading
+  # the same file the role reads is what keeps an assertion from becoming a copy
+  # that drifts. Only common is loaded this way: vars_files outrank inventory
+  # host_vars, so loading the others would silently replace the values this
+  # scenario sets for the VM with the role's own defaults, and the checks would
+  # compare the machine against something nobody deployed.
+  vars_files:
+    - ../../roles/common/defaults/main.yml
+
   tasks:
     - name: Read the effective congestion control and queue discipline
       ansible.builtin.command: sysctl -n {{ item }}
@@ -71,3 +80,93 @@
         url: http://127.0.0.1/
         status_code: [301, 302]
         follow_redirects: none
+
+    - name: Read the rest of the tuning the role claims to set
+      ansible.builtin.command: sysctl -n {{ item }}
+      loop:
+        - net.core.rmem_max
+        - net.ipv4.tcp_mtu_probing
+        - net.ipv4.tcp_notsent_lowat
+        - net.netfilter.nf_conntrack_max
+      register: verify_tuning
+      changed_when: false
+
+    - name: Every declared key reached the kernel, not just the famous two
+      ansible.builtin.assert:
+        that:
+          - verify_tuning.results[0].stdout == common_socket_buffer_max | string
+          - verify_tuning.results[1].stdout == common_tcp_mtu_probing | string
+          - verify_tuning.results[2].stdout == common_tcp_notsent_lowat | string
+          - verify_tuning.results[3].stdout == common_conntrack_max | string
+        fail_msg: >-
+          a file can hold a value the kernel never took: rmem_max is
+          {{ verify_tuning.results[0].stdout }}, conntrack_max is
+          {{ verify_tuning.results[3].stdout }}
+
+    - name: List every sysctl drop-in that could claim these keys
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail && grep -lE
+          '^\s*net\.(core\.default_qdisc|ipv4\.tcp_congestion_control)'
+          /etc/sysctl.conf /etc/sysctl.d/*.conf 2>/dev/null | sort
+        executable: /bin/bash
+      register: verify_declarers
+      changed_when: false
+      failed_when: false
+
+    # Whichever file sorts last wins, silently. One declaration is the only
+    # state in which the configured value and the effective value must agree
+    - name: Exactly one file declares the congestion control
+      ansible.builtin.assert:
+        that: verify_declarers.stdout_lines | length == 1
+        fail_msg: >-
+          {{ verify_declarers.stdout_lines | length }} files set congestion control
+          ({{ verify_declarers.stdout_lines | join(', ') }}); the last one read wins
+
+    - name: Read the panel unit's own properties
+      ansible.builtin.systemd_service:
+        name: x-ui
+      register: verify_xui_unit
+
+    - name: The descriptor limit is a decision rather than a default
+      ansible.builtin.assert:
+        that: verify_xui_unit.status.LimitNOFILE | int == common_xui_nofile
+        fail_msg: >-
+          x-ui has LimitNOFILE={{ verify_xui_unit.status.LimitNOFILE }},
+          expected {{ common_xui_nofile }}
+
+    # Two default_server declarations is a fatal error, so the packaged site has
+    # to be gone rather than merely overridden
+    - name: The distribution's own site is not enabled beside ours
+      ansible.builtin.stat:
+        path: /etc/nginx/sites-enabled/default
+      register: verify_packaged_site
+
+    - name: Only this role serves port 80
+      ansible.builtin.assert:
+        that: not verify_packaged_site.stat.exists
+        fail_msg: the packaged nginx site is still enabled and also claims port 80
+
+    - name: Read the panel binding out of its database
+      ansible.builtin.command:
+        argv:
+          - sqlite3
+          - "{{ xui_db }}"
+          - >-
+            select coalesce(max(case when key='webPort' then value end), '') || '|' ||
+                   coalesce(max(case when key='webBasePath' then value end), '') || '|' ||
+                   coalesce(max(case when key='webListen' then value end), '')
+            from settings
+      register: verify_binding
+      changed_when: false
+
+    # The command that sets these cannot report whether it worked, and its
+    # wrapper exits 0 for a subcommand it does not have
+    - name: The panel took the binding it was given
+      ansible.builtin.assert:
+        that:
+          - (verify_binding.stdout | trim).split('|') == [
+              xui_panel_port | string, xui_base_path, xui_listen_ip]
+        fail_msg: >-
+          the database holds {{ verify_binding.stdout | trim }}, not
+          {{ xui_panel_port }}|{{ xui_base_path }}|{{ xui_listen_ip }}

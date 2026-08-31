@@ -6,6 +6,11 @@ nginx_conf_file: /etc/nginx/conf.d/default.conf
 nginx_conf_obsolete_files:
   - /etc/nginx/conf.d/skibidi-vpn.conf
 
+# The distribution's own site also claims default_server on port 80. Two claims
+# is a fatal configuration error, so one of them has to go, and this role is the
+# one with an opinion about what port 80 should say
+nginx_take_over_default_site: true
+
 # A live 443 next to a silent 80 is an odd shape for a scanner to find, so 80
 # answers the way an ordinary site would
 nginx_redirect_target: "https://$host$request_uri"

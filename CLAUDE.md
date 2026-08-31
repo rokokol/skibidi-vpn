@@ -4,13 +4,13 @@ Ansible roles for 3x-ui nodes on Ubuntu. The **roles are public and generic**; t
 
 ## The boundary that decides where a change goes
 
-Anything inside `/etc/x-ui/x-ui.db` — inbounds, clients, routing, panel settings — belongs to the `xui-admin` skill and is covered by the database backup. This repository owns the OS layer around it. A change that could be made through the panel API does not belong here.
+Anything inside `/etc/x-ui/x-ui.db` — inbounds, clients, routing, panel settings — belongs to the `3x-ui-admin-skill` and is covered by the database backup. This repository owns the OS layer around it. A change that could be made through the panel API does not belong here.
 
 Across repositories the same rule holds and is not negotiable: **a single source of truth is a property, not a copy.** The mail host declares which nodes may use its alert intake; this repository holds no copy of that list and instead probes that the intake answers. Do not add a shared inventory file, and do not add a CI job that needs both repositories.
 
 ## The registry
 
-One TOML file per node in `$SKIBIDI_NODES_DIR` (default `inventory/nodes/`, git-ignored). `inventory/nodes.py` turns each node's `capabilities` list into Ansible groups, so a role is chosen by what a node declares itself to be — never by matching its name. The same directory is read by the `xui-admin` skill via `XUI_NODES_DIR`; that is why it is TOML rather than an Ansible inventory file.
+One TOML file per node in `$SKIBIDI_NODES_DIR` (default `inventory/nodes/`, git-ignored). `inventory/nodes.py` turns each node's `capabilities` list into Ansible groups, so a role is chosen by what a node declares itself to be — never by matching its name. The same directory is read by the `3x-ui-admin-skill` via `XUI_NODES_DIR`; that is why it is TOML rather than an Ansible inventory file.
 
 The inventory strips `token` and `token_file` from host variables. Keep it that way: `ansible-inventory --list` output ends up pasted into issues.
 

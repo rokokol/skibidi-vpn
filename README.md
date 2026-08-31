@@ -4,7 +4,7 @@ Ansible roles that build and maintain a 3x-ui VPN node on Ubuntu — the panel, 
 
 ## What this covers, and what it does not
 
-The split follows the database. Everything inside `/etc/x-ui/x-ui.db` — inbounds, clients, routing rules, panel settings — is administered through the panel API by the [xui-admin](https://github.com/rokokol/xui-admin) skill and is covered by the database backup. This repository owns everything outside it: packages, kernel settings, the firewall, the tunnel, nginx, certificates, timers and the backup mechanism itself
+The split follows the database. Everything inside `/etc/x-ui/x-ui.db` — inbounds, clients, routing rules, panel settings — is administered through the panel API by the [3x-ui-admin-skill](https://github.com/rokokol/3x-ui-admin-skill) skill and is covered by the database backup. This repository owns everything outside it: packages, kernel settings, the firewall, the tunnel, nginx, certificates, timers and the backup mechanism itself
 
 Nothing here writes to the panel database except the pre-change backup
 
@@ -24,7 +24,7 @@ xui_panel_port = 16099
 
 ```sh
 export SKIBIDI_NODES_DIR=/path/to/private/nodes   # this repo
-export XUI_NODES_DIR=/path/to/private/nodes       # the xui-admin skill
+export XUI_NODES_DIR=/path/to/private/nodes       # the 3x-ui-admin-skill
 ```
 
 One registry, two consumers. A node file must be `chmod 600`; the inventory refuses to read one that anyone else can open, and strips the panel token from host variables so it never reaches `ansible-inventory --list` output

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Dynamic inventory over a folder of node files — one file per node.
 
-The same folder is read by the xui-admin skill, which is why the format is TOML
+The same folder is read by the 3x-ui-admin-skill, which is why the format is TOML
 rather than an Ansible inventory file: one registry, two consumers. Point both at
 it with SKIBIDI_NODES_DIR (here) and XUI_NODES_DIR (there).
 

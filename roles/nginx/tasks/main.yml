@@ -20,21 +20,70 @@
   when: item != nginx_conf_file
   notify: Reload nginx
 
-- name: Configure port 80
-  ansible.builtin.template:
-    src: default.conf.j2
-    dest: "{{ nginx_conf_file }}"
-    owner: root
-    group: root
-    mode: "0644"
-    validate: nginx -t -c /etc/nginx/nginx.conf
+# Ubuntu ships an enabled site that claims default_server on port 80, and two
+# claims are a fatal error rather than a precedence question. This role owns
+# port 80, so the packaged one goes - the symlink only, leaving the file in
+# sites-available for anyone who wants to read what it said. On the existing
+# fleet the link had already been removed by hand, which is why this only
+# surfaced in the VM test
+- name: Disable the site the nginx package enables
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: nginx_take_over_default_site
   notify: Reload nginx
 
+# `validate` cannot be used here. It runs the command against the temporary file
+# in isolation, and a fragment from conf.d is not a configuration on its own: it
+# has no http block, so nginx rejects it whether or not it is correct. The check
+# has to happen after the file is in place, with the whole configuration around
+# it - which means being able to put the old one back
+- name: Configure port 80
+  block:
+    - name: Write the configuration
+      ansible.builtin.template:
+        src: default.conf.j2
+        dest: "{{ nginx_conf_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      register: nginx_written
+
+    - name: Check the configuration nginx would actually load
+      ansible.builtin.command:
+        argv: [nginx, -t]
+      changed_when: false
+
+  rescue:
+    - name: Put the previous configuration back
+      ansible.builtin.copy:
+        src: "{{ nginx_written.backup_file }}"
+        dest: "{{ nginx_conf_file }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: nginx_written.backup_file is defined
+
+    - name: Report what was rejected
+      ansible.builtin.fail:
+        msg: >-
+          nginx rejected the generated configuration and the previous one was
+          restored{{ ' from ' ~ nginx_written.backup_file if nginx_written.backup_file is defined
+          else ' (no backup existed - the file is new and has been left in place)' }}
+
+# Enabled and running is a state; reloading is an event. Asking for `reloaded`
+# unconditionally reports a change on every run, which is indistinguishable from
+# a role that keeps finding work to do
 - name: Enable and start nginx
   ansible.builtin.systemd_service:
     name: nginx
     enabled: true
     state: started
+
+- name: Apply any pending reload before asserting what port 80 says
+  ansible.builtin.meta: flush_handlers
 
 # The redirect is the whole point of answering on 80 at all, so it is asserted
 # from the node rather than assumed from a successful reload
@@ -44,3 +93,4 @@
     follow_redirects: none
     status_code: [301, 302]
   changed_when: false
+  check_mode: false

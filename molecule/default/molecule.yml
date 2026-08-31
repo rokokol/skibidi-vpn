@@ -1,33 +1,68 @@
 ---
-# A real Ubuntu VM, not a container: systemd, ufw and the tunnel are three of the
-# things worth testing here, and none of them behave inside a container.
-# Needs /dev/kvm — without it QEMU falls back to software emulation and a run
-# that should take minutes takes long enough to look like a hang
+# A real Ubuntu VM, not a container: systemd, ufw and sysctl are three of the
+# things worth testing here, and none of them behave inside a container - a
+# container shares the host's kernel, so a sysctl test would either fail or,
+# worse, change the host.
+#
+# The VM is driven by QEMU directly rather than through Vagrant. Vagrant's
+# libvirt provider is a Ruby plugin that nixpkgs does not package, and building
+# it inside the dev shell is exactly the kind of dependency that rots.
 driver:
-  name: vagrant
-  provider:
-    name: libvirt
+  name: default
+  options:
+    managed: false
+    # molecule would otherwise try to create the login it needs
+    login_cmd_template: 'ssh -F .molecule-ssh-config skibidi-node'
+    ansible_connection_options:
+      ansible_connection: ssh
 
 platforms:
   - name: skibidi-node
-    box: generic/ubuntu2404
-    memory: 1024
-    cpus: 1
 
 provisioner:
   name: ansible
   env:
     ANSIBLE_ROLES_PATH: ../../roles
+    ANSIBLE_HOST_KEY_CHECKING: "false"
   inventory:
+    hosts:
+      all:
+        hosts:
+          skibidi-node:
+            ansible_host: 127.0.0.1
+            ansible_port: 2222
+            ansible_user: molecule
+            ansible_become: true
+            ansible_ssh_private_key_file: ${MOLECULE_EPHEMERAL_DIRECTORY}/id_ed25519
+            ansible_ssh_common_args: >-
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
     host_vars:
       skibidi-node:
-        # The VM has no tunnel, so the panel binds to loopback and the bind
-        # assertion still means something: it proves the panel is not on 0.0.0.0
+        # No tunnel in the VM, so the panel binds to loopback. The assertion
+        # still means something: it proves the panel is not on 0.0.0.0
         xui_listen_ip: "127.0.0.1"
         xui_panel_port: 2053
         xui_base_path: "/molecule/"
+        # There is no tailscale0 here, and no tailnet to hide a direct path from
+        firewall_tunnel_interface: lo
         firewall_hide_tailscale_direct: false
         certs_domain: ""
+        # Stated here rather than pulled from the role defaults, because the
+        # verifier needs them and vars_files would outrank everything above
+        firewall_tcp_open: [22, 80, 443]
+        xui_db: /etc/x-ui/x-ui.db
 
 verifier:
   name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - create
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

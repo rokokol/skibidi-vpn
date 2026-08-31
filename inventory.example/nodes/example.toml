@@ -1,7 +1,7 @@
 # Copy to the private nodes directory as <name>.toml and chmod 600.
 # The file name is the node name; nothing else holds a list of nodes.
 #
-# The same file is read by the xui-admin skill, so panel and token live here too
+# The same file is read by the 3x-ui-admin-skill, so panel and token live here too
 # — one registry, two consumers. This inventory strips the token from hostvars so
 # it never reaches `ansible-inventory --list` output.
 

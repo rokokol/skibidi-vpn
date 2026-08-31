@@ -32,15 +32,16 @@
     signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
     state: present
 
+# No cache_valid_time here, unlike every other apt task: the repository was
+# added moments ago, so a cache considered fresh is a cache that predates it and
+# the package reads as nonexistent. Caught by the VM test, where the repository
+# is genuinely new - on a node that already had it, the stale cache still
+# contained the package and nothing looked wrong
 - name: Install tailscale
   ansible.builtin.apt:
     name: tailscale
     state: present
     update_cache: true
-    # Refresh only if no other role did it in the last hour: five roles each
-    # pulling the indexes turns a one-minute play into five minutes of the same
-    # download
-    cache_valid_time: 3600
 
 - name: Start tailscaled
   ansible.builtin.systemd_service:
