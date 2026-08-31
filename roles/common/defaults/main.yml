@@ -1,11 +1,40 @@
 ---
+# The drop-in this role owns. The name matters: a second file declaring the same
+# keys silently wins if it sorts later, so the role also removes the names this
+# fleet has used before
+common_sysctl_file: /etc/sysctl.d/60-skvpn.conf
+common_sysctl_obsolete_files:
+  - /etc/sysctl.d/60-vpn-infra.conf
+  - /etc/sysctl.d/60-skibidi-vpn.conf
+
 # Queue discipline and congestion control. fq is what BBR is designed against;
 # pairing them is the documented combination, not a tweak
 common_qdisc: fq
 common_congestion_control: bbr
 
-# The real ceiling on a busy node is the conntrack table, not file descriptors
-common_conntrack_max: 262144
+# QUIC receive path. The 212992 kernel default caps Hysteria2 throughput long
+# before the link does
+common_socket_buffer_max: 16777216
+
+# TCP autotuning ceiling. The stock 6/4 MB caps a single stream well below link
+# speed on a path of 50 ms or more
+common_tcp_rmem: 4096 131072 16777216
+common_tcp_wmem: 4096 16384 16777216
+
+# A path with broken PMTUD otherwise connects fine and then stalls on large
+# transfers instead of falling back to a smaller segment
+common_tcp_mtu_probing: 1
+
+# Bound the unsent bytes queued in each socket, so interactive traffic through
+# the proxy is not stuck behind a bulk transfer
+common_tcp_notsent_lowat: 131072
+
+common_netdev_max_backlog: 16384
+
+# The real ceiling on a busy node is the conntrack table, not file descriptors.
+# Each entry costs roughly 300 bytes of unswappable kernel memory, so this is
+# sized for a small VM rather than raised as far as it will go
+common_conntrack_max: 65536
 
 # Stock is 432000 (five days), so one orphaned connection holds a slot for five
 # days. Xray closes idle connections in minutes, so nothing legitimate here is
@@ -15,3 +44,8 @@ common_conntrack_established_timeout: 86400
 # One outgoing identity. A node that sometimes leaves over IPv6 and sometimes
 # over IPv4 has two reputations, and only one of them was ever checked
 common_prefer_ipv4: true
+
+# systemd's own default is 1024 soft. The panel is a Go program and raises its
+# own soft limit at startup, which is why nothing has bitten yet; anything else
+# on the box does not
+common_xui_nofile: 524288

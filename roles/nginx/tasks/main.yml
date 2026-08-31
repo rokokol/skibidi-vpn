@@ -4,11 +4,26 @@
     name: nginx
     state: present
     update_cache: true
+    # Refresh only if no other role did it in the last hour: five roles each
+    # pulling the indexes turns a one-minute play into five minutes of the same
+    # download
+    cache_valid_time: 3600
+
+# Removed before the template is written, not after: `nginx -t` reads every file
+# in conf.d, so a leftover under another name would still be declaring
+# `default_server` when the new file is validated, and the play would abort
+- name: Remove configurations this role used to write
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ nginx_conf_obsolete_files }}"
+  when: item != nginx_conf_file
+  notify: Reload nginx
 
 - name: Configure port 80
   ansible.builtin.template:
     src: default.conf.j2
-    dest: /etc/nginx/conf.d/skibidi-vpn.conf
+    dest: "{{ nginx_conf_file }}"
     owner: root
     group: root
     mode: "0644"
@@ -20,3 +35,12 @@
     name: nginx
     enabled: true
     state: started
+
+# The redirect is the whole point of answering on 80 at all, so it is asserted
+# from the node rather than assumed from a successful reload
+- name: Prove port 80 answers like an ordinary site
+  ansible.builtin.uri:
+    url: http://127.0.0.1/
+    follow_redirects: none
+    status_code: [301, 302]
+  changed_when: false

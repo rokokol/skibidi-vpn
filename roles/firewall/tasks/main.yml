@@ -4,6 +4,10 @@
     name: ufw
     state: present
     update_cache: true
+    # Refresh only if no other role did it in the last hour: five roles each
+    # pulling the indexes turns a one-minute play into five minutes of the same
+    # download
+    cache_valid_time: 3600
 
 - name: Default to denying inbound and allowing outbound
   community.general.ufw:
@@ -18,6 +22,7 @@
     rule: allow
     port: "{{ item }}"
     proto: tcp
+    comment: skibidi-vpn public
   loop: "{{ firewall_tcp_open }}"
 
 - name: Open the public UDP ports
@@ -25,7 +30,22 @@
     rule: allow
     port: "{{ item }}"
     proto: udp
+    comment: skibidi-vpn public
   loop: "{{ firewall_udp_open }}"
+
+# A port answering only a named set of sources. Listing the sources here rather
+# than adding them by hand is what keeps them reviewable and reproducible: the
+# CDN's ranges change, and a rule nobody can find is a rule nobody updates
+- name: Open ports restricted to named sources
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.0.port }}"
+    proto: tcp
+    src: "{{ item.1 }}"
+    comment: "{{ item.0.comment | default('skibidi-vpn restricted') }}"
+  loop: "{{ firewall_tcp_open_from | subelements('sources') }}"
+  loop_control:
+    label: "{{ item.0.port }} from {{ item.1 }}"
 
 # The panel binds to the tunnel only, but a firewall that also says so means a
 # panel accidentally bound to 0.0.0.0 is still not reachable from the internet
@@ -34,18 +54,65 @@
     rule: allow
     direction: in
     interface: "{{ firewall_tunnel_interface }}"
+    comment: skibidi-vpn tailnet
 
+# The port is written twice - here and in the daemon's environment file - and if
+# they drift the drop rule stops matching while looking exactly as before
+- name: Read the port the tailscale daemon actually uses
+  ansible.builtin.command:
+    argv: [sh, -c, '. /etc/default/tailscaled 2>/dev/null; echo "${PORT:-}"']
+  register: firewall_tailscaled_port
+  changed_when: false
+  check_mode: false
+  when: firewall_hide_tailscale_direct
+
+- name: Fail when the declared port is not the one the daemon listens on
+  ansible.builtin.assert:
+    that: >-
+      firewall_tailscaled_port.stdout | trim == ''
+      or firewall_tailscaled_port.stdout | trim == firewall_tailscale_port | string
+    fail_msg: >-
+      /etc/default/tailscaled says PORT={{ firewall_tailscaled_port.stdout | trim }}
+      but this role would write a rule for {{ firewall_tailscale_port }}.
+      The rule would match nothing and the leak would continue unnoticed.
+  when: firewall_hide_tailscale_direct
+
+# lineinfile rather than blockinfile: the rule already exists on these nodes,
+# hand-written and without markers, so a block would be appended beside it and
+# the file would carry the rule twice. Matching on the rule's shape replaces
+# whichever form is there
 - name: Drop Tailscale's direct path so the exit address emits no WireGuard
-  ansible.builtin.blockinfile:
+  ansible.builtin.lineinfile:
     path: /etc/ufw/before.rules
-    # Must sit above the RELATED,ESTABLISHED accept, or established flows slip
-    # past it and the leak continues for every already-open peer
+    regexp: '^-A ufw-before-output .*--sport {{ firewall_tailscale_port }} -j DROP'
+    line: >-
+      -A ufw-before-output -o {{ ansible_default_ipv4.interface }}
+      -p udp --sport {{ firewall_tailscale_port }} -j DROP
+    # Above the RELATED,ESTABLISHED accept, or established flows slip past it
+    # and the leak continues for every already-open peer
     insertbefore: '^-A ufw-before-output -m conntrack --ctstate RELATED,ESTABLISHED'
-    marker: "# {mark} skibidi-vpn tailscale egress"
-    block: |
-      -A ufw-before-output -o {{ ansible_default_ipv4.interface }} -p udp --sport {{ firewall_tailscale_port }} -j DROP
+    firstmatch: true
     backup: true
   when: firewall_hide_tailscale_direct
+  notify: Reload ufw
+
+# Only where the node has a public IPv6 address. Writing it unconditionally
+# would leave a dead rule on nodes without v6, and a dead rule reads like
+# protection while protecting nothing
+- name: Drop the same path over IPv6
+  ansible.builtin.lineinfile:
+    path: /etc/ufw/before6.rules
+    regexp: '^-A ufw6-before-output .*--sport {{ firewall_tailscale_port }} -j DROP'
+    line: >-
+      -A ufw6-before-output -o {{ ansible_default_ipv6.interface }}
+      -p udp --sport {{ firewall_tailscale_port }} -j DROP
+    insertbefore: '^-A ufw6-before-output -m conntrack --ctstate RELATED,ESTABLISHED'
+    firstmatch: true
+    backup: true
+  when:
+    - firewall_hide_tailscale_direct
+    - ansible_default_ipv6.address is defined
+    - ansible_default_ipv6.address | length > 0
   notify: Reload ufw
 
 - name: Enable ufw

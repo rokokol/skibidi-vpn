@@ -1,8 +1,13 @@
 ---
-# Only these three answer from the internet. Everything the panel and the tailnet
-# need arrives on the tunnel interface instead
+# Only these answer from the internet. Everything the panel and the tailnet need
+# arrives on the tunnel interface instead
 firewall_tcp_open: [22, 80, 443]
 firewall_udp_open: []
+
+# Ports open only to named sources. The subscription endpoint lives here: it is
+# fronted by a CDN, so it needs to answer that CDN and nobody else. Each entry is
+# {port, comment, sources: [cidr, ...]}
+firewall_tcp_open_from: []
 
 firewall_tunnel_interface: tailscale0
 
@@ -11,4 +16,8 @@ firewall_tunnel_interface: tailscale0
 # the address that answers Reality on 443 must not also emit WireGuard, or the
 # two are trivially the same host
 firewall_hide_tailscale_direct: true
+
+# Declared in two places - here and in /etc/default/tailscaled - and a drift
+# between them makes the rule silently stop matching. The role reads the
+# daemon's value and refuses to write a rule for a different port
 firewall_tailscale_port: 41641

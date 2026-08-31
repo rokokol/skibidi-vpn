@@ -1,0 +1,34 @@
+{{ ansible_managed | comment }}
+# These keys are declared here and nowhere else: a later drop-in or
+# /etc/sysctl.conf silently overrides this file, and the node checker fails when
+# a second source sets any of them.
+
+net.core.default_qdisc = {{ common_qdisc }}
+net.ipv4.tcp_congestion_control = {{ common_congestion_control }}
+
+# QUIC receive path. The 212992 kernel default caps Hysteria2 throughput long
+# before the link does.
+net.core.rmem_max = {{ common_socket_buffer_max }}
+net.core.wmem_max = {{ common_socket_buffer_max }}
+
+# TCP autotuning ceiling. The stock defaults cap a single stream well below link
+# speed on a path of 50 ms or more.
+net.ipv4.tcp_rmem = {{ common_tcp_rmem }}
+net.ipv4.tcp_wmem = {{ common_tcp_wmem }}
+
+# A path with broken PMTUD otherwise connects fine and then stalls on large
+# transfers instead of falling back to a smaller segment.
+net.ipv4.tcp_mtu_probing = {{ common_tcp_mtu_probing }}
+
+# Bound the unsent bytes queued in each socket so interactive traffic through
+# the proxy is not stuck behind a bulk transfer.
+net.ipv4.tcp_notsent_lowat = {{ common_tcp_notsent_lowat }}
+
+net.core.netdev_max_backlog = {{ common_netdev_max_backlog }}
+
+# Each conntrack entry costs unswappable kernel memory, so this is sized for the
+# machine rather than raised as far as it will go.
+net.netfilter.nf_conntrack_max = {{ common_conntrack_max }}
+
+# Stock is five days, so one orphaned connection holds a slot for five days.
+net.netfilter.nf_conntrack_tcp_timeout_established = {{ common_conntrack_established_timeout }}

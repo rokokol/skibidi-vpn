@@ -4,6 +4,10 @@
     name: [curl, socat, cron]
     state: present
     update_cache: true
+    # Refresh only if no other role did it in the last hour: five roles each
+    # pulling the indexes turns a one-minute play into five minutes of the same
+    # download
+    cache_valid_time: 3600
 
 - name: Install acme.sh
   ansible.builtin.shell:
@@ -46,14 +50,19 @@
     CF_Token: "{{ certs_cf_token }}"
   no_log: true
 
+# The reload command runs from acme.sh's own cron on renewal. Every service
+# holding the certificate has to be told: nginx rereads on reload, the panel
+# reads only at startup, so leaving it out means it serves the expired
+# certificate until something else restarts it. systemd-run detaches the
+# restart, because the panel may be carrying the session issuing it
 - name: Install the certificate where the services read it
   ansible.builtin.command:
     cmd: >-
       {{ certs_home }}/acme.sh --install-cert -d {{ certs_domain }} --ecc
-      --key-file {{ certs_install_dir }}/key.pem
-      --fullchain-file {{ certs_install_dir }}/fullchain.pem
-      --reloadcmd "systemctl reload nginx || true"
-    creates: "{{ certs_install_dir }}/fullchain.pem"
+      --key-file {{ certs_install_dir }}/{{ certs_key_name }}
+      --fullchain-file {{ certs_install_dir }}/{{ certs_fullchain_name }}
+      --reloadcmd "{{ certs_reload_cmd }}"
+    creates: "{{ certs_install_dir }}/{{ certs_fullchain_name }}"
 
 # acme.sh installs its own cron entry; this asserts it rather than adding a
 # second renewal path that would race the first
@@ -61,8 +70,29 @@
   ansible.builtin.command: crontab -l
   register: certs_cron
   changed_when: false
+  check_mode: false
 
 - name: Fail if nothing will renew the certificate
   ansible.builtin.assert:
     that: "'acme.sh' in certs_cron.stdout"
     fail_msg: acme.sh installed no renewal cron entry; the certificate would expire silently
+
+# A renewal that runs but never reaches the panel looks exactly like a renewal
+# that works, until a client refuses the connection. -checkend asks the question
+# directly rather than parsing a date: openssl prints the expiry in a format
+# whose timezone name Python's strptime no longer accepts, and a check that
+# depends on string parsing fails for reasons unrelated to certificates
+- name: Fail while there is still time to renew the certificate
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -checkend
+      - "{{ certs_min_days_left | int * 86400 }}"
+      - -noout
+      - -in
+      - "{{ certs_install_dir }}/{{ certs_fullchain_name }}"
+  register: certs_validity
+  changed_when: false
+  check_mode: false
+  failed_when: certs_validity.rc != 0

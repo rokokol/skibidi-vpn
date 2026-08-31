@@ -7,9 +7,24 @@
     group: root
     mode: "0644"
 
+# deb822_repository parses sources with python3-debian and refuses to run at all
+# in check mode without it - and it will not install it in check mode either, so
+# a dry run against a host that has never had the package cannot get past this
+# task. Installing it as its own step breaks that circle from the first real run
+- name: Install what the repository module parses with
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    update_cache: true
+    # Refresh only if no other role did it in the last hour: five roles each
+    # pulling the indexes turns a one-minute play into five minutes of the same
+    # download
+    cache_valid_time: 3600
+
 - name: Add the Tailscale repository
   ansible.builtin.deb822_repository:
     name: tailscale
+    install_python_debian: true
     types: [deb]
     uris: https://pkgs.tailscale.com/stable/ubuntu
     suites: "{{ ansible_distribution_release }}"
@@ -22,6 +37,10 @@
     name: tailscale
     state: present
     update_cache: true
+    # Refresh only if no other role did it in the last hour: five roles each
+    # pulling the indexes turns a one-minute play into five minutes of the same
+    # download
+    cache_valid_time: 3600
 
 - name: Start tailscaled
   ansible.builtin.systemd_service:
@@ -33,6 +52,7 @@
   ansible.builtin.command: tailscale status --json
   register: tailscale_status
   changed_when: false
+  check_mode: false
   failed_when: false
 
 # Joining is the one step that needs a secret, so it runs only when the node is

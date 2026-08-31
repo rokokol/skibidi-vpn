@@ -3,4 +3,24 @@ certs_domain: ""                 # the wildcard base, e.g. example.org
 certs_email: ""
 certs_cf_token: ""               # from the vault, scoped Zone:DNS:Edit on one zone
 certs_home: /root/.acme.sh
-certs_install_dir: /etc/ssl/skibidi-vpn
+
+# Where the certificate is installed. This has to be the path the panel already
+# has in its database: the panel stores paths, not files, and issuing into a
+# different directory leaves it serving nothing while the certificate sits
+# somewhere valid and unread
+certs_install_dir: /root/cert
+certs_fullchain_name: fullchain.pem
+certs_key_name: privkey.pem
+
+# Renewal has to reach every service holding the certificate open. nginx rereads
+# on reload; the panel reads at startup only, so a hook that reloads nginx alone
+# leaves the panel serving the expired one until something restarts it.
+# The panel's restart is detached, because restarting it drops the tunnel a
+# session may be riding, and `|| true` keeps a renewal from failing over a
+# service that is not installed on this node
+certs_reload_cmd: >-
+  systemctl reload nginx || true;
+  systemd-run --collect --unit=xui-cert-reload systemctl restart x-ui || true
+
+# Fail while there is still time to act, rather than on the morning it expires
+certs_min_days_left: 14

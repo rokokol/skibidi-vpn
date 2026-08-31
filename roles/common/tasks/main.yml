@@ -20,19 +20,58 @@
     - "tcp_{{ common_congestion_control }}"
     - nf_conntrack
 
-- name: Apply network and conntrack settings
-  ansible.posix.sysctl:
-    name: "{{ item.key }}"
-    value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/60-skibidi-vpn.conf
-    sysctl_set: true
-    reload: true
+# A drop-in under an older name keeps declaring the same keys, and whichever
+# file sorts later wins. Removing them is what makes this role's file the only
+# declaration rather than merely the intended one
+- name: Remove drop-ins this fleet used before
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ common_sysctl_obsolete_files }}"
+  when: item != common_sysctl_file
+  notify: Apply sysctl settings
+
+- name: Declare the kernel settings
+  ansible.builtin.template:
+    src: sysctl.conf.j2
+    dest: "{{ common_sysctl_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply sysctl settings
+
+- name: Apply the settings now rather than at the end of the play
+  ansible.builtin.meta: flush_handlers
+
+# The file being written is not proof the kernel took it: a value can be
+# rejected, or overridden by a source this role does not own
+- name: Read back the settings that carry the most weight
+  ansible.builtin.command:
+    argv: [sysctl, -n, "{{ item }}"]
   loop:
-    - { key: net.core.default_qdisc, value: "{{ common_qdisc }}" }
-    - { key: net.ipv4.tcp_congestion_control, value: "{{ common_congestion_control }}" }
-    - { key: net.netfilter.nf_conntrack_max, value: "{{ common_conntrack_max }}" }
-    - key: net.netfilter.nf_conntrack_tcp_timeout_established
-      value: "{{ common_conntrack_established_timeout }}"
+    - net.core.default_qdisc
+    - net.ipv4.tcp_congestion_control
+    - net.netfilter.nf_conntrack_max
+  changed_when: false
+  check_mode: false
+  register: common_effective
+
+# Skipped in check mode on purpose: the assertion is about the state after the
+# file is applied, and a dry run deliberately does not apply it. Running it there
+# would report every intended change as a failure
+- name: Fail when the kernel disagrees with what was declared
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - common_effective.results[0].stdout == common_qdisc
+      - common_effective.results[1].stdout == common_congestion_control
+      - common_effective.results[2].stdout == common_conntrack_max | string
+    fail_msg: >-
+      effective sysctl values differ from {{ common_sysctl_file }}:
+      qdisc={{ common_effective.results[0].stdout }},
+      congestion={{ common_effective.results[1].stdout }},
+      conntrack_max={{ common_effective.results[2].stdout }}.
+      Another drop-in or /etc/sysctl.conf is setting them.
 
 # Linux prefers IPv6 for outgoing connections wherever it has one, so a node with
 # an unused IPv6 address silently egresses from an address nothing was checked
@@ -47,3 +86,26 @@
     group: root
     mode: "0644"
   when: common_prefer_ipv4
+
+- name: Make room for the panel's unit drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/x-ui.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Give the panel a file descriptor limit of its own
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/x-ui.service.d/limits.conf
+    content: |
+      # Managed by skibidi-vpn.
+      # systemd's default soft limit is 1024. The panel is a Go program and
+      # raises its own at startup, so this changes nothing for it today - it is
+      # here so the limit is a decision rather than an accident of the runtime.
+      [Service]
+      LimitNOFILE={{ common_xui_nofile }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
