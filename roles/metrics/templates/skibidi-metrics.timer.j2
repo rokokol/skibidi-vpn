@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Sample this node regularly
+
+[Timer]
+OnBootSec={{ metrics_boot_delay }}
+OnUnitActiveSec={{ metrics_interval }}
+# The exact second does not matter to a sampler, and a fixed one would line the
+# fleet's probes up with everything else that runs on round minutes
+RandomizedDelaySec=1min
+
+[Install]
+WantedBy=timers.target

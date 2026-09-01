@@ -25,6 +25,8 @@ checker_watched_timers:
     max_silence_hours: 2
   - name: xray-geodata-update.timer
     max_silence_hours: 48
+  - name: skibidi-metrics.timer
+    max_silence_hours: 2
 
 # Units that must be running for the node to be doing its job
 checker_required_units: [x-ui, nginx, fail2ban, tailscaled]

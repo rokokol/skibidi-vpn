@@ -1,0 +1,85 @@
+---
+- name: Install the collector
+  ansible.builtin.copy:
+    src: skibidi-metrics.py
+    dest: /usr/local/sbin/skibidi-metrics
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - skibidi-metrics.service
+    - skibidi-metrics.timer
+  notify: Reload systemd
+
+- name: Apply the unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+# Skipped in check mode: the unit it enables is written by this same play,
+# and a dry run deliberately does not write it
+- name: Enable the timer
+  ansible.builtin.systemd_service:
+    name: skibidi-metrics.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+# A node is never deployed into a state where its own sampler cannot run; the
+# first rows land now, in front of someone, rather than failing silently on a
+# timer tonight
+- name: Take the first sample, now
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/skibidi-metrics, collect]
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: Prove the store answers with what was just written
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/skibidi-metrics
+      - export
+      - --since
+      - "0"
+      - --until
+      - "9999999999999999"
+  register: metrics_export
+  changed_when: false
+  failed_when: metrics_export.rc != 0 or (metrics_export.stdout | from_json).samples | length == 0
+  when: not ansible_check_mode
+
+# The master reads the fleet's stores at report time over a key that this guard
+# reduces to a single question. Generated on the master and never leaving it;
+# the nodes get only the public half
+- name: Give the master a key that can only ask for metrics
+  ansible.builtin.command:
+    argv: [ssh-keygen, -t, ed25519, -N, "", -C, skibidi-report, -f, /root/.ssh/skibidi-report]
+  args:
+    creates: /root/.ssh/skibidi-report
+  when: "'master' in group_names"
+
+- name: Read the public half back
+  ansible.builtin.slurp:
+    src: /root/.ssh/skibidi-report.pub
+  register: metrics_master_pubkey
+  when: "'master' in group_names and not ansible_check_mode"
+
+# restrict + a forced command make the key useless for anything but the export:
+# a stolen private half asks for metrics or gets refused, it never gets a shell
+- name: Let the master pull this node's metrics and nothing else
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ (hostvars[groups['master'] | first].metrics_master_pubkey.content | b64decode).strip() }}"
+    key_options: restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard"
+    comment: skibidi-report
+  when:
+    - not ansible_check_mode
+    - groups['master'] | default([]) | length > 0
+    - "'master' not in group_names"
+    - hostvars[groups['master'] | first].metrics_master_pubkey is defined

@@ -1,0 +1,22 @@
+---
+# Sampling cadence. Ten minutes keeps a week at roughly a thousand rows per
+# metric, which SQLite reads back in milliseconds and the report aggregates
+# without any precomputed buckets
+metrics_boot_delay: 5min
+metrics_interval: 10min
+metrics_retention_days: 90
+
+metrics_db_dir: /var/lib/skibidi-metrics
+
+# Timers whose last-fired time the report shows; a quiet one is a mechanism
+# that stopped without saying so, and the checker alerts on it long before
+# Monday — the report only makes the pattern visible over the week
+metrics_watched_timers:
+  - skibidi-check.timer
+  - xray-geodata-update.timer
+  - skibidi-metrics.timer
+
+# Units whose restart counters the report turns into weekly deltas. A service
+# that restarted forty times without ever being down at check time is invisible
+# to the checker and exactly what this row exists to catch
+metrics_watched_units: [x-ui, nginx, fail2ban, tailscaled]

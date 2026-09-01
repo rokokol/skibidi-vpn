@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Sample the OS state the weekly report is built from
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-metrics collect
+Environment=SKIBIDI_METRICS_DB={{ metrics_db_dir }}/metrics.db
+Environment=SKIBIDI_METRICS_RETENTION_DAYS={{ metrics_retention_days }}
+Environment="SKIBIDI_WATCHED_TIMERS={{ metrics_watched_timers | join(' ') }}"
+Environment="SKIBIDI_WATCHED_UNITS={{ metrics_watched_units | join(' ') }}"

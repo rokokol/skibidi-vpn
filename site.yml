@@ -11,4 +11,5 @@
     - role: certs
       when: certs_domain | default('') | length > 0
     - nginx
+    - metrics
     - checker

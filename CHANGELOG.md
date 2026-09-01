@@ -20,6 +20,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - CI on every push and pull request: `nix flake check`, yamllint, ansible-lint at the production profile, the secret gate, and a playbook syntax check against the example registry — so a clone with no fleet and no secrets runs the same gate the fleet does. The example inventory is required to actually answer, because a broken dynamic inventory downgrades itself to a warning
 - A manual molecule workflow, kept off the push gate on purpose: it needs `/dev/kvm`, which hosted runners provide inconsistently
 - Lint configuration in `.ansible-lint` and `.yamllint`, so CI and a laptop disagree about nothing; a `ci` dev shell that carries the linters without the VM toolchain
+- Role `metrics`, sampling into SQLite every ten minutes what the panel does not know about a node: disk, conntrack pressure, ESTABLISHED sockets with no timer armed, pending updates and reboot flags, fail2ban totals, ufw drops per interval, unit restart counts and timer last-fired times. Cumulative counters are stored as-is — the week's deltas are the reader's question. The master gets an ed25519 key that a forced command reduces to one permitted request shape, proven by asking it for a shell and being refused; its timer joins the checker's silence watch
 
 ### Fixed
 
