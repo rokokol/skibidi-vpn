@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Snapshot the panel daily
+
+[Timer]
+OnCalendar=*-*-* {{ '%02d' | format(reporter_hour) }}:{{ '%02d' | format(reporter_snapshot_minute) }}:00
+# A day the machine slept through still gets its snapshot on wake; the traffic
+# deltas are computed between whatever snapshots exist
+Persistent=true
+
+[Install]
+WantedBy=timers.target

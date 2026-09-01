@@ -21,6 +21,8 @@ nix develop
 ansible-playbook site.yml --syntax-check
 ansible-lint                 # must stay green at the production profile
 ./tests/no-secrets.sh
+nix develop .#ci -c python3 -m unittest discover -s tests   # the report, on synthetic data
+nix develop .#ci -c python3 tests/falsify.py                # break each report guard, require red
 nix flake check
 molecule test                # real Ubuntu VM under KVM
 ```

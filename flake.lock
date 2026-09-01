@@ -1,5 +1,25 @@
 {
   "nodes": {
+    "ddlc-palette": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788175553,
+        "narHash": "sha256-UVgebuQzuzpKGKKhGIiKIaaxKRp2X7wEHHz0wvg1t+k=",
+        "owner": "rokokol",
+        "repo": "ddlc-palette",
+        "rev": "c672b49377ea1cb805a1f63315b474f7122b4622",
+        "type": "github"
+      },
+      "original": {
+        "owner": "rokokol",
+        "repo": "ddlc-palette",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1787736819,
@@ -18,6 +38,7 @@
     },
     "root": {
       "inputs": {
+        "ddlc-palette": "ddlc-palette",
         "nixpkgs": "nixpkgs"
       }
     }

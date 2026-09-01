@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Build and send the weekly fleet report
+# The letter always goes out, so this unit failing is the one thing a missing
+# Monday letter can mean — and that failure mails its own journal directly
+OnFailure=skibidi-alert@%n.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-report send
+# A read-only or absent config dir makes matplotlib rebuild its font cache on
+# every run, silently adding tens of seconds
+Environment=MPLCONFIGDIR={{ reporter_state_dir }}/mpl

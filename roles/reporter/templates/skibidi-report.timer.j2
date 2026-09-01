@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Send the weekly report
+
+[Timer]
+OnCalendar={{ reporter_weekday }} *-*-* {{ '%02d' | format(reporter_hour) }}:{{ '%02d' | format(reporter_send_minute) }}:00
+# A Monday the master slept through still sends its letter on wake: the window
+# is computed from the calendar, not from the moment of firing
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,10 +1,18 @@
 {
   description = "Deploy and maintain the 3x-ui VPN nodes";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The report's colours come from the palette repo the same way mail-node's
+    # do: locked here, updated by `nix flake update`, copied nowhere
+    ddlc-palette = {
+      url = "github:rokokol/ddlc-palette";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, ddlc-palette }:
     let
       systems = [
         "x86_64-linux"
@@ -42,6 +50,11 @@
             shellcheck
           ];
 
+          # Deploys run from this shell, and the reporter role reads this to
+          # carry the theme onto the master — the palette rides the lockfile,
+          # never a copy in a tracked file
+          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-palette.lib.palette;
+
           shellHook = ''
             export SKIBIDI_NODES_DIR="''${SKIBIDI_NODES_DIR:-$PWD/inventory/nodes}"
             echo "nodes: $SKIBIDI_NODES_DIR"
@@ -56,8 +69,11 @@
             ansible
             ansible-lint
             yamllint
-            python3
+            # matplotlib because the report tests render real charts; the cid
+            # round trip proves nothing if no chart was ever attached
+            (python3.withPackages (ps: with ps; [ matplotlib ]))
           ];
+          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-palette.lib.palette;
         };
       });
 

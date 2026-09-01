@@ -1,10 +1,14 @@
 ---
-name: Molecule
+name: molecule
 
-# Manual only: the scenario boots a real Ubuntu VM and needs /dev/kvm, which
-# hosted runners provide inconsistently — a push must never gate on it
+# Manual only — deliberately not even on a cron: the scenario needs /dev/kvm,
+# which hosted runners provide inconsistently, so a scheduled red would indict
+# the runner pool rather than any drift worth detecting
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   vm:
@@ -12,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Hosted Ubuntu runners ship KVM but leave /dev/kvm root-only;
       # without this udev rule QEMU falls back to TCG and the VM crawls

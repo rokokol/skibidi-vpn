@@ -1,0 +1,103 @@
+---
+- name: Install what the charts need
+  ansible.builtin.apt:
+    name: [python3-matplotlib]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# 0700 because the snapshots inside, sanitised as they are, still describe the
+# fleet's structure and its clients' masked names
+- name: Make the state directory
+  ansible.builtin.file:
+    path: "{{ reporter_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the report generator
+  ansible.builtin.copy:
+    src: skibidi-report.py
+    dest: /usr/local/sbin/skibidi-report
+    owner: root
+    group: root
+    mode: "0700"
+
+# The theme rides the deploy: the dev shell exports the palette the flake is
+# locked to, and this carries it onto the master. Colours are not secrets, and
+# a deploy from outside the shell simply leaves the neutral defaults in place
+- name: Carry the theme the flake is locked to
+  ansible.builtin.copy:
+    content: "{{ lookup('env', 'SKIBIDI_PALETTE_JSON') }}"
+    dest: /etc/skibidi/palette.json
+    owner: root
+    group: root
+    mode: "0644"
+  when: lookup('env', 'SKIBIDI_PALETTE_JSON') | length > 0
+
+# 0600: the node addresses in here are the private registry's, and the whole
+# point of that registry is that they appear nowhere public
+- name: Write the report configuration
+  ansible.builtin.template:
+    src: report.toml.j2
+    dest: /etc/skibidi/report.toml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - skibidi-snapshot.service
+    - skibidi-snapshot.timer
+    - skibidi-report.service
+    - skibidi-report.timer
+  notify: Reload systemd
+
+- name: Apply the unit changes before enabling the timers
+  ansible.builtin.meta: flush_handlers
+
+# Skipped in check mode: the units it enables are written by this same play,
+# and a dry run deliberately does not write them
+- name: Enable the timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - skibidi-snapshot.timer
+    - skibidi-report.timer
+  when: not ansible_check_mode
+
+# The first snapshot lands now, in front of someone: it proves the CLI mints a
+# token, the panel answers, and the sanitiser writes — the three things the
+# Monday diff will silently lack otherwise
+- name: Take the first snapshot, now
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/skibidi-report, snapshot]
+  changed_when: true
+  when: not ansible_check_mode
+
+# Builds the entire letter — panel, SSH pulls, charts, both bodies — and
+# throws it away. A master is never deployed into a state where Monday's
+# letter would be its first full rehearsal
+- name: Prove the letter builds without sending it
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/skibidi-report, send, --print]
+  register: reporter_rehearsal
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Fail the deploy if the letter does not build
+  ansible.builtin.assert:
+    that:
+      - reporter_rehearsal.rc == 0
+      - "'Subject: ' in reporter_rehearsal.stdout"
+    fail_msg: the report generator cannot build a letter on this master
+  when: not ansible_check_mode

@@ -1,0 +1,30 @@
+---
+# The report window and the timers must come from one place: these two feed
+# both OnCalendar and the script's window arithmetic, so the letter cannot
+# drift away from the moment it fires without someone editing this file
+reporter_timezone: Europe/Moscow
+reporter_hour: 9
+reporter_weekday: Mon
+
+# Minutes past the hour: the daily snapshot lands just after the window's
+# edge, the letter fires a little later still, so Monday's snapshot exists
+# before the letter that diffs against it is built
+reporter_snapshot_minute: 2
+reporter_send_minute: 7
+
+# Where the letter goes; the same intake the alerts already use
+reporter_to: "{{ alert_to | default('') }}"
+
+# The master's own panel, exactly as the registry declares it
+reporter_panel_url: "{{ panel | default('') }}"
+
+reporter_state_dir: /var/lib/skibidi-report
+
+reporter_weekday_index:
+  Mon: 0
+  Tue: 1
+  Wed: 2
+  Thu: 3
+  Fri: 4
+  Sat: 5
+  Sun: 6

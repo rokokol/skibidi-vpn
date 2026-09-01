@@ -1,17 +1,32 @@
 ---
-name: CI
+name: build
 
 on:
   push:
     branches: [master, main]
   pull_request:
+  workflow_dispatch:
+  # Automation verifies branches by calling this workflow against a ref — the
+  # real checks, never a copy of their commands that drifts apart
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
 
 jobs:
   flake:
     name: nix flake check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: DeterminateSystems/nix-installer-action@v16
       - uses: nix-community/cache-nix-action@v6
         with:
@@ -24,10 +39,23 @@ jobs:
   lint:
     name: Lint, secret gate, syntax
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       SKIBIDI_NODES_DIR: ${{ github.workspace }}/inventory.example/nodes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # An unpinned lookup makes a job change behavior with zero change in the
+      # repo; every tool here comes from the flake's own lock
+      - name: CI tools come from the lock, not the registry
+        run: |
+          if grep -rEn 'nix (run|shell) nixpkgs#|pip +install |npx +[a-z@.-]' .github/workflows; then
+            echo "unpinned registry lookup in a workflow — pin the tool via the flake" >&2
+            exit 1
+          fi
+
       - uses: DeterminateSystems/nix-installer-action@v16
       - uses: nix-community/cache-nix-action@v6
         with:
@@ -41,6 +69,14 @@ jobs:
 
       - name: Secret gate
         run: ./tests/no-secrets.sh
+
+      - name: Report tests
+        run: nix develop .#ci -c python3 -m unittest discover -s tests -v
+
+      # Proves the suite would fail if the generator broke — a green suite
+      # that cannot go red is not evidence
+      - name: Falsification harness
+        run: nix develop .#ci -c python3 tests/falsify.py
 
       - name: yamllint
         run: nix develop .#ci -c yamllint --strict .

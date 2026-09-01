@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Take the daily sanitised panel snapshot the weekly report reads
+OnFailure=skibidi-alert@%n.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-report snapshot

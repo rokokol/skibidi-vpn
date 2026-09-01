@@ -1,5 +1,8 @@
 # skibidi-vpn
 
+[![build](https://github.com/rokokol/skibidi-vpn/actions/workflows/build.yml/badge.svg)](https://github.com/rokokol/skibidi-vpn/actions/workflows/build.yml)
+[![molecule](https://github.com/rokokol/skibidi-vpn/actions/workflows/molecule.yml/badge.svg)](https://github.com/rokokol/skibidi-vpn/actions/workflows/molecule.yml)
+
 Ansible roles that build and maintain a 3x-ui VPN node on Ubuntu — the panel, its certificate, the tunnel, the firewall and the periodic checks. The roles are generic; the fleet they are pointed at is not part of this repository
 
 ## What this covers, and what it does not

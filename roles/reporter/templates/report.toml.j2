@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+# Read by /usr/local/sbin/skibidi-report. Holds no credential: the panel token
+# is minted by the panel's own CLI at each run and never touches disk.
+
+[report]
+timezone = "{{ reporter_timezone }}"
+hour = {{ reporter_hour }}
+weekday = {{ reporter_weekday_index[reporter_weekday] }}
+to = "{{ reporter_to }}"
+sender = "skibidi-vpn@{{ inventory_hostname }}"
+master_name = "{{ inventory_hostname }}"
+
+[panel]
+url = "{{ reporter_panel_url }}"
+verify_tls = false
+
+[paths]
+state_dir = "{{ reporter_state_dir }}"
+
+{% for host in groups['nodes'] | sort if host != inventory_hostname %}
+# The address each node already answers its panel on: the tunnel, not the
+# public internet — the pull rides the same trust path administration does
+[[nodes]]
+name = "{{ host }}"
+host = "{{ hostvars[host].xui_listen_ip }}"
+{% endfor %}

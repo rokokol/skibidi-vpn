@@ -12,4 +12,6 @@
       when: certs_domain | default('') | length > 0
     - nginx
     - metrics
+    - role: reporter
+      when: "'master' in group_names and reporter_to | length > 0"
     - checker
