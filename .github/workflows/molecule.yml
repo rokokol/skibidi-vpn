@@ -1,0 +1,34 @@
+---
+name: Molecule
+
+# Manual only: the scenario boots a real Ubuntu VM and needs /dev/kvm, which
+# hosted runners provide inconsistently — a push must never gate on it
+on:
+  workflow_dispatch:
+
+jobs:
+  vm:
+    name: Full role run in a throwaway VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Hosted Ubuntu runners ship KVM but leave /dev/kvm root-only;
+      # without this udev rule QEMU falls back to TCG and the VM crawls
+      - name: Open /dev/kvm to the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -c /dev/kvm
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-molecule-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-molecule-${{ runner.os }}-
+
+      - name: molecule test
+        run: nix develop -c molecule test

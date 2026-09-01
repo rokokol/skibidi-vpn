@@ -47,6 +47,18 @@
             echo "nodes: $SKIBIDI_NODES_DIR"
           '';
         };
+
+        # What a push gate needs and nothing it does not: the default shell's
+        # QEMU/libvirt closure would make every CI run pay for the VM tests
+        # that only the manual molecule workflow actually runs
+        ci = pkgs.mkShell {
+          packages = with pkgs; [
+            ansible
+            ansible-lint
+            yamllint
+            python3
+          ];
+        };
       });
 
       checks = forAll (pkgs: {

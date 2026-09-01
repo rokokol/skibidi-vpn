@@ -17,6 +17,9 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - Role `checker`, running on a timer, asserting the node is still in the state it was deployed into and mailing the journal of a failed run directly to the intake. It notices the failures that report nothing: a conntrack table filling up, an inbound whose port stopped answering, a drop rule present in the file but absent from the kernel, a tailscale port that drifted out of step with the rule that hides it, and a fail2ban filter that no longer matches the log it reads
 - A node watches its own master and mails past it. A master cannot report its own death, and every alert routed through it dies with it, so the node that notices is a different one. Three consecutive misses rather than one, counted across runs, so an outage is distinguished from a hiccup
 - Watchdogs are watched by their own silence: systemd records when each timer last fired, and a timer quiet well past its interval is a mechanism that stopped without saying so
+- CI on every push and pull request: `nix flake check`, yamllint, ansible-lint at the production profile, the secret gate, and a playbook syntax check against the example registry — so a clone with no fleet and no secrets runs the same gate the fleet does. The example inventory is required to actually answer, because a broken dynamic inventory downgrades itself to a warning
+- A manual molecule workflow, kept off the push gate on purpose: it needs `/dev/kvm`, which hosted runners provide inconsistently
+- Lint configuration in `.ansible-lint` and `.yamllint`, so CI and a laptop disagree about nothing; a `ci` dev shell that carries the linters without the VM toolchain
 
 ### Fixed
 

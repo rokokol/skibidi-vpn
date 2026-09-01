@@ -9,3 +9,7 @@ rules:
   # permits; forbidding the spaces would only churn readable lines
   braces:
     max-spaces-inside: 1
+  # GitHub named a workflow's trigger key `on`; that is their schema, not a
+  # boolean that lost its way
+  truthy:
+    check-keys: false

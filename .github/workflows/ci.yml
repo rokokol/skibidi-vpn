@@ -1,0 +1,57 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  flake:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-flake-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-flake-${{ runner.os }}-
+      # Copies only tracked files, which is what once caught a .gitignore
+      # pattern that had swallowed the secret gate itself
+      - run: nix flake check
+
+  lint:
+    name: Lint, secret gate, syntax
+    runs-on: ubuntu-latest
+    env:
+      SKIBIDI_NODES_DIR: ${{ github.workspace }}/inventory.example/nodes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-ci-${{ runner.os }}-
+
+      # A checkout does not preserve mode 600, and the inventory refuses
+      # node files that anyone but their owner can read
+      - name: Restore the registry permissions the inventory insists on
+        run: chmod 600 inventory.example/nodes/*.toml
+
+      - name: Secret gate
+        run: ./tests/no-secrets.sh
+
+      - name: yamllint
+        run: nix develop .#ci -c yamllint --strict .
+
+      - name: ansible-lint
+        run: nix develop .#ci -c ansible-lint
+
+      # --syntax-check alone would shrug off a broken inventory as a warning;
+      # requiring the example node in the output makes an empty registry loud
+      - name: Inventory answers with the example node
+        run: nix develop .#ci -c sh -c 'ansible-inventory --list | grep -q example'
+
+      - name: Playbook syntax
+        run: nix develop .#ci -c ansible-playbook site.yml --syntax-check
