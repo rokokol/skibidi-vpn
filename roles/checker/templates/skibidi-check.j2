@@ -95,6 +95,78 @@ else
     fail "ufw is not active"
 fi
 
+# The outward-facing surface, compared against what this node declares. A rule
+# nobody remembers adding is the shape of a mistake: the legend rests on a node
+# looking like an ordinary web server, and one stray port undoes it. Rules bound
+# to the tunnel interface are excluded - the tunnel is not the outside.
+declared_tcp="{{ (firewall_tcp_open + (firewall_tcp_open_from | default([]) | map(attribute='port') | list)) | map('string') | join(' ') }}"
+declared_udp="{{ firewall_udp_open | default([]) | map('string') | join(' ') }}"
+
+open_now=$(ufw status 2>/dev/null \
+    | awk '/ALLOW/ && !/on {{ firewall_tunnel_interface }}/ {print $1}' \
+    | grep -oE '^[0-9]+(/(tcp|udp))?' | sort -u)
+
+unexpected=""
+for entry in $open_now; do
+    port=${entry%%/*}
+    proto=${entry#*/}
+    [ "$proto" = "$entry" ] && proto=tcp
+    case " $declared_tcp $declared_udp " in
+        *" $port "*) ;;
+        *) unexpected="$unexpected $entry" ;;
+    esac
+done
+
+if [ -z "$unexpected" ]; then
+    ok "the firewall opens only what this node declares"
+else
+    fail "the firewall also allows$unexpected, which this node does not declare"
+fi
+
+for port in $declared_tcp $declared_udp; do
+    if printf '%s\n' "$open_now" | grep -qE "^${port}(/|$)"; then
+        :
+    else
+        fail "port $port is declared open but the firewall does not allow it"
+    fi
+done
+
+# A service answering on a public address that the firewall does not admit is
+# usually deliberate - a spare inbound kept closed, say - but it is also exactly
+# what a service bound wider than intended looks like, so it is said out loud
+# rather than left to be noticed
+noted=""
+ephemeral_from=$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null | awk '{print $1}')
+ephemeral_from=${ephemeral_from:-32768}
+default_addr=$(ip -4 -o addr show dev "${iface:-eth0}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+if [ -n "$default_addr" ]; then
+    while read -r proto laddr; do
+        [ -n "$laddr" ] || continue
+        port=${laddr##*:}
+        case "$laddr" in
+            "$default_addr":*|'*:'*|'0.0.0.0:'*|'[::]:'*) ;;
+            *) continue ;;
+        esac
+        case " $declared_tcp $declared_udp {{ firewall_tailscale_port | default(41641) }} " in
+            *" $port "*) continue ;;
+        esac
+        # Ports the kernel hands out for outgoing connections. Xray opens one per
+        # upstream connection, so they change constantly and mean nothing here -
+        # listing them would drown the notes that matter
+        if [ "$port" -ge "$ephemeral_from" ] 2>/dev/null; then
+            continue
+        fi
+        # One line per port, not per address family
+        case " $noted " in
+            *" $proto/$port "*) continue ;;
+        esac
+        noted="$noted $proto/$port"
+        ok "note: $proto/$port listens publicly but the firewall does not admit it"
+    done <<EOF
+$(ss -lntuH 2>/dev/null | awk '{print $1, $5}')
+EOF
+fi
+
 {% if firewall_hide_tailscale_direct | default(true) %}
 # The legend rests on this: the address answering Reality on 443 must not also
 # emit WireGuard, or the two are trivially the same host

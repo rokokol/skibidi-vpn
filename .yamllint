@@ -1,0 +1,11 @@
+---
+extends: default
+
+rules:
+  # Comments here explain the failure a task prevents; wrapping them at 80
+  # columns costs more readability than it buys
+  line-length: disable
+  # `{ src: ..., dest: ... }` with padding is the style ansible-lint itself
+  # permits; forbidding the spaces would only churn readable lines
+  braces:
+    max-spaces-inside: 1

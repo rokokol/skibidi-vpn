@@ -1,0 +1,2 @@
+# The profile lives here so CI and a laptop disagree about nothing
+profile: production
