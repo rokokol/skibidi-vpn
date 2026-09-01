@@ -19,6 +19,10 @@
 
 # Scoped to one zone and, where the provider allows it, to this node's address.
 # A token that can edit every zone is the same blast radius as the registrar
+# Skipped when no token is supplied, rather than writing an empty one. The file
+# may already hold a working token placed by hand or by an earlier run, and
+# overwriting it with nothing breaks renewal silently - the certificate keeps
+# working until the day it expires
 - name: Store the DNS API token
   ansible.builtin.copy:
     dest: /etc/acme-cf-token
@@ -26,7 +30,13 @@
     owner: root
     group: root
     mode: "0600"
+  when: certs_cf_token | length > 0
   no_log: true
+
+- name: Look for a certificate already installed
+  ansible.builtin.stat:
+    path: "{{ certs_install_dir }}/{{ certs_fullchain_name }}"
+  register: certs_installed
 
 - name: Create the install directory
   ansible.builtin.file:
@@ -43,9 +53,9 @@
   ansible.builtin.command:
     cmd: >-
       {{ certs_home }}/acme.sh --issue --dns dns_cf
-      -d {{ certs_domain }} -d *.{{ certs_domain }}
+      -d '{{ certs_primary_domain }}' -d {{ certs_domain }}
       --server letsencrypt
-    creates: "{{ certs_home }}/*.{{ certs_domain }}_ecc/fullchain.cer"
+    creates: "{{ certs_home }}/{{ certs_primary_domain }}_ecc/fullchain.cer"
   environment:
     CF_Token: "{{ certs_cf_token }}"
   no_log: true
@@ -55,14 +65,34 @@
 # reads only at startup, so leaving it out means it serves the expired
 # certificate until something else restarts it. systemd-run detaches the
 # restart, because the panel may be carrying the session issuing it
+# `creates` on the certificate would make this a one-time task, so a change to
+# the reload command would never reach the renewal that has to run it. The
+# recorded command is read instead, and the install is redone only when it
+# differs or the certificate is not there at all
+- name: Read the reload command acme.sh has recorded
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      grep -h '^Le_ReloadCmd='
+      '{{ certs_home }}/{{ certs_primary_domain }}_ecc/{{ certs_primary_domain }}.conf'
+      2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"" | base64 -d 2>/dev/null || true
+    executable: /bin/bash
+  register: certs_recorded_reload
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
 - name: Install the certificate where the services read it
   ansible.builtin.command:
     cmd: >-
-      {{ certs_home }}/acme.sh --install-cert -d {{ certs_domain }} --ecc
+      {{ certs_home }}/acme.sh --install-cert -d '{{ certs_primary_domain }}' --ecc
       --key-file {{ certs_install_dir }}/{{ certs_key_name }}
       --fullchain-file {{ certs_install_dir }}/{{ certs_fullchain_name }}
       --reloadcmd "{{ certs_reload_cmd }}"
-    creates: "{{ certs_install_dir }}/{{ certs_fullchain_name }}"
+  when: >-
+    not certs_installed.stat.exists
+    or (certs_recorded_reload.stdout | default('') | trim) != (certs_reload_cmd | trim)
+  changed_when: true
 
 # acme.sh installs its own cron entry; this asserts it rather than adding a
 # second renewal path that would race the first

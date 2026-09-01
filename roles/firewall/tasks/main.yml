@@ -118,3 +118,31 @@
 - name: Enable ufw
   community.general.ufw:
     state: enabled
+
+- name: Apply any pending firewall reload before asserting what is loaded
+  ansible.builtin.meta: flush_handlers
+
+# before.rules is a file ufw reads at reload, so a rule can sit in it correctly
+# and not be in the kernel at all - which looks identical from the file's side.
+# The legend this fleet rests on is that the address answering Reality on 443
+# emits no WireGuard, so the rule being loaded is worth asserting rather than
+# assuming
+- name: Read the output chain the kernel is actually enforcing
+  ansible.builtin.command:
+    argv: [iptables, -S, ufw-before-output]
+  register: firewall_loaded_rules
+  changed_when: false
+  check_mode: false
+  when: firewall_hide_tailscale_direct
+
+- name: The drop is loaded, not merely written
+  ansible.builtin.assert:
+    that: >-
+      firewall_loaded_rules.stdout is search('--sport ' ~ firewall_tailscale_port ~ ' -j DROP')
+    fail_msg: >-
+      the rule dropping UDP from port {{ firewall_tailscale_port }} is in
+      /etc/ufw/before.rules but not in the running ruleset, so the direct path is
+      still open and the node's public address emits WireGuard
+  when:
+    - firewall_hide_tailscale_direct
+    - not ansible_check_mode

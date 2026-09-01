@@ -1,5 +1,12 @@
 ---
 certs_domain: ""                 # the wildcard base, e.g. example.org
+
+# acme.sh keys everything - its state directory, its config, the name to pass to
+# --install-cert - by the FIRST domain of the certificate. The wildcard goes
+# first so that name is stable: putting the apex first and the wildcard second
+# would make acme.sh treat an existing wildcard-first certificate as a different
+# one and issue a duplicate rather than renewing it
+certs_primary_domain: "*.{{ certs_domain }}"
 certs_email: ""
 certs_cf_token: ""               # from the vault, scoped Zone:DNS:Edit on one zone
 certs_home: /root/.acme.sh
