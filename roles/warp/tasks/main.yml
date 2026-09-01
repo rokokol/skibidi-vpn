@@ -1,0 +1,135 @@
+---
+- name: Install the keyring Cloudflare signs its packages with
+  ansible.builtin.get_url:
+    url: https://pkg.cloudflareclient.com/pubkey.gpg
+    dest: /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Cloudflare repository
+  ansible.builtin.deb822_repository:
+    name: cloudflare-warp
+    install_python_debian: true
+    types: [deb]
+    uris: https://pkg.cloudflareclient.com/
+    suites: "{{ ansible_distribution_release }}"
+    components: [main]
+    signed_by: /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+    state: present
+
+# No cache_valid_time: the repository was added moments ago, so a cache
+# considered fresh is one that predates it and the package reads as nonexistent
+- name: Install the WARP client
+  ansible.builtin.apt:
+    name: cloudflare-warp
+    state: present
+    update_cache: true
+
+- name: Enable and start the daemon
+  ansible.builtin.systemd_service:
+    name: warp-svc
+    enabled: true
+    state: started
+
+# Registration creates account state on Cloudflare's side, so it happens once
+# and only when there is none. Running it again would abandon the existing
+# registration rather than refresh it
+- name: Ask whether this node is already registered
+  ansible.builtin.command:
+    argv: [warp-cli, --accept-tos, registration, show]
+  register: warp_registration
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Register with Cloudflare
+  ansible.builtin.command:
+    argv: [warp-cli, --accept-tos, registration, new]
+  when: warp_registration.rc != 0
+  changed_when: true
+
+# Proxy mode rather than a system-wide tunnel: the node's own traffic must keep
+# leaving from its own address, and only what the routing rules send to this
+# port goes through Cloudflare
+- name: Read the mode the client is in
+  ansible.builtin.command:
+    argv: [warp-cli, --accept-tos, --json, settings]
+  register: warp_settings
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Put the client in proxy mode on its own port
+  ansible.builtin.command:
+    argv: [warp-cli, --accept-tos, mode, proxy]
+  when: "'WarpProxy' not in (warp_settings.stdout | default(''))"
+  changed_when: true
+
+- name: Set the proxy port
+  ansible.builtin.command:
+    argv: [warp-cli, --accept-tos, proxy, port, "{{ warp_proxy_port }}"]
+  when: (warp_proxy_port | string) not in (warp_settings.stdout | default(''))
+  changed_when: true
+
+- name: Connect
+  ansible.builtin.command:
+    argv: [warp-cli, --accept-tos, connect]
+  register: warp_connect
+  changed_when: "'Success' in (warp_connect.stdout | default(''))"
+  failed_when: false
+
+- name: Make the directory the watchdog keeps its history in
+  ansible.builtin.file:
+    path: "{{ warp_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the watchdog
+  ansible.builtin.template:
+    src: warp-watchdog.j2
+    dest: /usr/local/sbin/warp-watchdog
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install its units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - warp-watchdog.service
+    - warp-watchdog.timer
+  notify: Reload systemd for warp
+
+- name: Apply the unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the watchdog
+  ansible.builtin.systemd_service:
+    name: warp-watchdog.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+# The point of installing WARP is that traffic leaves through it, so that is
+# what is asserted rather than the daemon being up
+- name: Prove traffic actually leaves through Cloudflare
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/warp-watchdog]
+  environment:
+    WARP_WD_DRY_RUN: "1"
+  register: warp_verdict
+  changed_when: false
+  check_mode: false
+
+- name: Fail when the tunnel is up but carries nothing
+  ansible.builtin.assert:
+    that: "'verdict=healthy' in warp_verdict.stdout"
+    fail_msg: "WARP is installed but not carrying traffic: {{ warp_verdict.stdout | trim }}"
+  when: not ansible_check_mode

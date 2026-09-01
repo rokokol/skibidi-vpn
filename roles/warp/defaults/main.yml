@@ -1,0 +1,26 @@
+---
+# Where the local SOCKS proxy answers. Nothing else on the node should use this
+# port, and the routing rules that send traffic through WARP name it
+warp_proxy_host: 127.0.0.1
+warp_proxy_port: 40000
+
+# What the tunnel is asked to prove: this URL answers with warp=on only when the
+# request really left through Cloudflare's network
+warp_probe_url: https://www.cloudflare.com/cdn-cgi/trace
+
+# A tunnel that has not rekeyed in this long is not carrying traffic, whatever
+# its status says
+warp_max_handshake_age: 21600
+
+# At most one restart per this interval. A daemon that is broken for a reason a
+# restart cannot fix would otherwise be restarted every ten minutes forever,
+# which looks like self-healing and is actually a loop
+warp_min_restart_interval: 21600
+
+warp_check_interval: 10min
+warp_state_dir: /var/lib/warp-watchdog
+
+# Restarts within a day before the node is called unhealthy. A single restart is
+# the watchdog doing its job quietly; a run of them is a fault that hides behind
+# it, and hiding is the failure mode a watchdog introduces
+warp_restarts_before_alert: 3

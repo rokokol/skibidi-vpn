@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Restarts warp-svc when the tunnel stops carrying traffic, and records every
+# restart so that a daemon needing constant restarting stops looking healthy.
+#
+# The verdict comes from egress, not from status: warp-cli reports a connected
+# tunnel that carries nothing often enough that its own opinion cannot be the
+# test. What is asked instead is whether a request actually leaves through
+# Cloudflare.
+
+set -uo pipefail
+
+proxy="{{ warp_proxy_host }}:{{ warp_proxy_port }}"
+probe_url="{{ warp_probe_url }}"
+max_handshake={{ warp_max_handshake_age }}
+min_interval={{ warp_min_restart_interval }}
+state_dir="{{ warp_state_dir }}"
+last_restart="$state_dir/last-restart"
+restart_log="$state_dir/restarts"
+dry_run="${WARP_WD_DRY_RUN:-0}"
+
+egress_ok() {
+    local trace
+    # Twice, because one failure is as likely to be the far end as the tunnel
+    for _ in 1 2; do
+        trace=$(curl --fail --silent --socks5-hostname "$proxy" --max-time 12 "$probe_url" 2>/dev/null || true)
+        if printf '%s' "$trace" | grep -qx 'warp=on'; then
+            return 0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+handshake_age() {
+    warp-cli --accept-tos --json tunnel stats 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("secs_since_last_handshake",""))' 2>/dev/null
+}
+
+handshake=$(handshake_age)
+reason=""
+
+if ! egress_ok; then
+    reason="egress probe failed through $proxy"
+elif [ -z "$handshake" ]; then
+    # Egress works, so the tunnel is fine and only the statistics are unreadable.
+    # Restarting a working tunnel over an unreadable number is worse than not
+    # knowing the number
+    logger --tag warp-watchdog "tunnel stats unreadable, but egress works; not restarting"
+elif [ "$handshake" -gt "$max_handshake" ] 2>/dev/null; then
+    reason="tunnel has not rekeyed in ${handshake}s"
+fi
+
+# The checker asks for this verdict without wanting anything restarted
+if [ "$dry_run" = "1" ]; then
+    if [ -n "$reason" ]; then
+        printf 'verdict=unhealthy handshake=%s reason=%s\n' "${handshake:-unknown}" "$reason"
+    else
+        printf 'verdict=healthy handshake=%s\n' "${handshake:-unknown}"
+    fi
+    exit 0
+fi
+
+[ -n "$reason" ] || exit 0
+
+now=$(date +%s)
+last=0
+if [ -f "$last_restart" ]; then
+    read -r last < "$last_restart" || last=0
+    case "$last" in
+        ''|*[!0-9]*) logger --tag warp-watchdog "ignoring unreadable timestamp in $last_restart"; last=0 ;;
+    esac
+fi
+
+if [ $((now - last)) -lt "$min_interval" ]; then
+    logger --tag warp-watchdog "$reason, but throttled: last restart $(((now - last) / 60))m ago"
+    exit 0
+fi
+
+mkdir -p "$state_dir"
+logger --tag warp-watchdog "restarting warp-svc: $reason"
+
+# Detached from this unit: restarting warp-svc tears down the proxy this script
+# is talking through, and a systemd job that kills its own transport can be
+# reaped before it finishes
+systemd-run --collect --unit=warp-svc-restart systemctl restart warp-svc >/dev/null 2>&1 || systemctl restart warp-svc
+sleep 10
+
+# Every restart is written down, not just the last one. A watchdog that quietly
+# restarts a service six times a day has stopped being a repair and become a
+# symptom, and only the count shows it
+printf '%s\n' "$now" >> "$restart_log"
+printf '%s\n' "$now" > "$last_restart.tmp"
+mv -f "$last_restart.tmp" "$last_restart"
+
+if egress_ok; then
+    logger --tag warp-watchdog "WARP egress recovered"
+    exit 0
+fi
+logger --tag warp-watchdog "WARP egress still unavailable after restart"
+exit 1

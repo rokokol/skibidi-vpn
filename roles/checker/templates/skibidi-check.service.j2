@@ -1,7 +1,9 @@
 # {{ ansible_managed }}
 [Unit]
 Description=Assert this node is in the state it was deployed into
-OnFailure=skibidi-alert@%n.service
+# %N, not %n: %n already ends in .service, and appending another
+# suffix names the instance skibidi-alert@skibidi-check.service.service
+OnFailure=skibidi-alert@%N.service
 # Without these, Restart= on a failing unit never reaches the failed state and
 # OnFailure never fires
 StartLimitIntervalSec=0

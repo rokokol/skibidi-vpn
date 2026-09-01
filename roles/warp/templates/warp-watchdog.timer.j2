@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check the WARP tunnel regularly
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ warp_check_interval }}
+RandomizedDelaySec=1min
+
+[Install]
+WantedBy=timers.target

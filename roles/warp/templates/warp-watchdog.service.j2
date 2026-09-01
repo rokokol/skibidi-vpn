@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Restart WARP when its tunnel stops carrying traffic
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/warp-watchdog
