@@ -171,7 +171,12 @@ if [ -r {{ xui_db }} ]; then
         else
             fail "inbound port $port is enabled but nothing listens on it"
         fi
-    done < <(sqlite3 {{ xui_db }} "select distinct port from inbounds where enable = 1" 2>/dev/null)
+    # Only this machine's own inbounds. A master's database also holds the
+    # inbounds of every node it drives, and those are served there, not here -
+    # checking them would report a healthy fleet as broken. node_id is 0 or
+    # absent for a local one
+    done < <(sqlite3 {{ xui_db }} "select distinct port from inbounds
+             where enable = 1 and coalesce(node_id, 0) = 0" 2>/dev/null)
 fi
 
 # --- the timers that watch everything else ----------------------------------
