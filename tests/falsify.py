@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORT = "roles/reporter/files/skibidi-report.py"
+ALERT = "roles/checker/files/skibidi-alert-html.py"
 
 
 @dataclass
@@ -33,16 +34,10 @@ class Defect:
     # What the defect does, in the terms an operator would care about. If the
     # tests survive it, this sentence describes what nobody checks.
     consequence: str
+    file: str = REPORT
 
 
 DEFECTS = [
-    Defect(
-        name="mask/labels-in-clear",
-        find="    keep = 2 if len(text) <= 5 else 3\n"
-             "    return f\"{text[:keep]}{'*' * (len(text) - keep)}\"",
-        replace="    return text",
-        consequence="every relative's real name rides the weekly letter in clear text",
-    ),
     Defect(
         name="counters/negative-week",
         find="    return new - old if new >= old else new",
@@ -57,8 +52,8 @@ DEFECTS = [
     ),
     Defect(
         name="escape/raw-text",
-        find='{html.escape(text)}</p>\'',
-        replace="{text}</p>'",
+        find='color:{PALETTE["ink"]}">{html.escape(text)}</p>\'',
+        replace='color:{PALETTE["ink"]}">{text}</p>\'',
         consequence="a client label chosen maliciously becomes live HTML in the mail client",
     ),
     Defect(
@@ -80,10 +75,10 @@ DEFECTS = [
         consequence="a delayed run reports a window that ends mid-week and nobody notices",
     ),
     Defect(
-        name="sanitise/labels-through",
-        find="        clients.append(mask_label(client.get(\"email\")))",
-        replace="        clients.append(str(client.get(\"email\")))",
-        consequence="the weekly snapshot in /var/lib carries every client's real name",
+        name="sanitise/credentials-through",
+        find="        clients.append(client_label(client.get(\"email\")))",
+        replace="        clients.append(json.dumps(client))",
+        consequence="the weekly snapshot in /var/lib carries every client UUID and subscription id",
     ),
     Defect(
         name="diff/enable-blind",
@@ -96,6 +91,27 @@ DEFECTS = [
         find='    for name, reason in data.get("unreachable", []):',
         replace="    for name, reason in []:",
         consequence="a node that did not answer reads as a healthy, quiet node",
+    ),
+    Defect(
+        name="alert-mail/text-rewritten",
+        file=ALERT,
+        find='    message.set_content(body, charset="utf-8", cte="8bit")',
+        replace='    message.set_content("see the HTML part", charset="utf-8", cte="8bit")',
+        consequence="a client without HTML loses the journal the alert exists to carry",
+    ),
+    Defect(
+        name="alert-mail/raw-journal-html",
+        file=ALERT,
+        find='        items = "".join(f"<li>{html.escape(line[4:].strip())}</li>" for line in fails)',
+        replace='        items = "".join(f"<li>{line[4:].strip()}</li>" for line in fails)',
+        consequence="a journal line chosen maliciously becomes live HTML in the mail client",
+    ),
+    Defect(
+        name="alert-mail/fail-blends-in",
+        find='    if line.startswith("FAIL"):\n        return "fail"',
+        replace='    if False:\n        return "fail"',
+        consequence="the one line that says what broke is styled like every passing check",
+        file=ALERT,
     ),
 ]
 
@@ -110,8 +126,7 @@ def run_suite() -> bool:
 
 def main() -> int:
     needle = sys.argv[1] if len(sys.argv) > 1 else ""
-    path = ROOT / REPORT
-    original = path.read_text()
+    originals = {file: (ROOT / file).read_text() for file in {d.file for d in DEFECTS}}
 
     if not run_suite():
         print("the suite is already red; falsification proves nothing here", file=sys.stderr)
@@ -121,6 +136,8 @@ def main() -> int:
     for defect in DEFECTS:
         if needle and needle not in defect.name:
             continue
+        original = originals[defect.file]
+        path = ROOT / defect.file
         if original.count(defect.find) != 1:
             print(f"stale     {defect.name}: its find-pattern no longer matches exactly once")
             survived.append(defect)

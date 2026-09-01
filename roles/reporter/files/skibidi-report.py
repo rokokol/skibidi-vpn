@@ -45,63 +45,89 @@ DAY_US = 86400 * 1_000_000
 # The neutral fallback; the deployed master overrides it with the DDLC palette
 # the flake is locked to, delivered as /etc/skibidi/palette.json at deploy time
 PALETTE_DEFAULTS = {
-    "paper": "#f6f7f9",
+    "paper": "#ffffff",
     "ink": "#1f2430",
     "muted": "#5b6472",
     "accent": "#3b6ea5",
     "ok": "#3f7d4e",
     "warn": "#b3423a",
     "ash": "#d8dce3",
-    "blush": "#f9e9e7",
+    "blush": "#eef1f5",
+    "divider": "#c3cbd6",
 }
 
-# The theme's own series order, kept as-is because it is a safety mechanism
-# rather than a taste: adjacent entries are what a stacked bar puts side by
-# side, and each neighbour pair clears deuteranopia in the palette's tests
-THEME_CYCLE = ("plum", "bow", "rule", "monikaEye", "yuri")
-
-# What each semantic slot means in the theme's vocabulary
+# What each semantic slot here means in the theme's report vocabulary. The
+# --ddlc-* names are the contract that repo maintains for HTML reports, which
+# outlives any renaming of the palette's own character colours
 THEME_ROLES = {
-    "paper": "paper",
-    "ink": "ink",
-    "muted": "jacket",
-    "ash": "ash",
-    "blush": "blush",
-    "warn": "bow",
-    "accent": "plum",
-    "ok": "monikaEye",
+    "paper": "--ddlc-ground",
+    "ink": "--ddlc-ink",
+    "muted": "--ddlc-muted",
+    "ash": "--ddlc-grid",
+    "blush": "--ddlc-code-ground",
+    "divider": "--ddlc-divider",
+    "warn": "--ddlc-series-2",
+    "accent": "--ddlc-accent",
+    "ok": "--ddlc-series-4",
 }
 
+THEME_CYCLE = tuple(f"--ddlc-series-{index}" for index in range(1, 6))
 
-def load_palette(named: dict | None = None) -> dict:
+
+def parse_theme_css(text: str) -> dict:
+    """The :root block of the theme's report stylesheet, as name → colour.
+
+    Only the light block: mail clients render on white, and the dark half of
+    the file deliberately collapses two series — a letter must not inherit
+    that. The parse stops at the first closing brace so the media queries
+    further down cannot override what :root declared.
+    """
+    root = re.search(r":root\s*\{([^}]*)\}", text)
+    if not root:
+        return {}
+    return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;\s]+)\s*;", root.group(1)))
+
+
+def load_palette(css: str | None = None) -> dict:
     """Semantic slots resolved against the theme, wherever the theme is.
 
-    REPORT_PALETTE in the environment wins (the mail host's convention), then
-    the file the deploy carried over, then the neutral defaults — a report on
-    a machine nobody themed still renders.
+    The stylesheet the deploy carried over wins; without it the neutral
+    defaults stand — a report on a machine nobody themed still renders.
     """
-    if named is None:
-        raw = os.environ.get("REPORT_PALETTE", "")
-        if not raw:
-            try:
-                raw = Path(
-                    os.environ.get("SKIBIDI_PALETTE_FILE", "/etc/skibidi/palette.json")
-                ).read_text()
-            except OSError:
-                raw = ""
+    if css is None:
         try:
-            named = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            named = {}
-    named = named or {}
+            css = Path(
+                os.environ.get("SKIBIDI_REPORT_CSS_FILE", "/etc/skibidi/ddlc-report.css")
+            ).read_text()
+        except OSError:
+            css = ""
+    named = parse_theme_css(css or "")
     palette: dict = dict(PALETTE_DEFAULTS)
-    for slot, theme_name in THEME_ROLES.items():
-        if theme_name in named:
-            palette[slot] = named[theme_name]
-    if all(name in named for name in THEME_CYCLE):
-        palette["cycle"] = [named[name] for name in THEME_CYCLE]
+    for slot, variable in THEME_ROLES.items():
+        if variable in named:
+            palette[slot] = named[variable]
+    if all(variable in named for variable in THEME_CYCLE):
+        palette["cycle"] = [named[variable] for variable in THEME_CYCLE]
     else:
         palette["cycle"] = [palette[slot] for slot in ("accent", "warn", "muted", "ok", "ink")]
+    # Needs-attention is the game's own inform dialog. The stylesheet's
+    # inform variables win; the character names from the raw palette remain
+    # as the transitional fallback for a theme revision from before the
+    # stylesheet learned to say inform
+    palette["inform_bg"] = palette["blush"]
+    palette["inform_border"] = palette["warn"]
+    if "--ddlc-inform-ground" in named:
+        palette["inform_bg"] = named["--ddlc-inform-ground"]
+        palette["inform_border"] = named.get(
+            "--ddlc-inform-border", palette["inform_border"])
+        return palette
+    try:
+        characters = json.loads(Path(os.environ.get(
+            "SKIBIDI_PALETTE_FILE", "/etc/skibidi/palette.json")).read_text())
+    except (OSError, ValueError):
+        characters = {}
+    palette["inform_bg"] = characters.get("dot", palette["inform_bg"])
+    palette["inform_border"] = characters.get("blush", palette["inform_border"])
     return palette
 
 
@@ -149,14 +175,12 @@ def report_window(now=None, timezone_name="Europe/Moscow", hour=9, weekday=0):
 # ---------------------------------------------------------------- masking
 
 
-def mask_label(value) -> str:
-    """The skill's degradation for client labels: personal data, but also the
-    only handle an operator has on a row, so a stub rather than nothing."""
-    text = str(value or "")
-    if len(text) <= 2:
-        return "*" * len(text)
-    keep = 2 if len(text) <= 5 else 3
-    return f"{text[:keep]}{'*' * (len(text) - keep)}"
+def client_label(value) -> str:
+    """The label as the panel carries it. This letter goes to the fleet's own
+    operator over their own mail path — masking their family's names from them
+    would protect nobody. What stays out of every letter and snapshot is the
+    credential half: UUIDs, subscription ids, keys."""
+    return str(value or "")
 
 
 def format_bytes(count) -> str:
@@ -282,7 +306,7 @@ def sanitise_inbound(inbound: dict) -> dict:
     except (TypeError, json.JSONDecodeError):
         pass
     for client in settings.get("clients") or [{"email": s.get("email")} for s in stats]:
-        clients.append(mask_label(client.get("email")))
+        clients.append(client_label(client.get("email")))
     return {
         "key": f"{inbound.get('nodeId') or inbound.get('node_id') or 0}"
                f"/{inbound.get('protocol')}/{inbound.get('port')}",
@@ -341,7 +365,7 @@ def take_snapshot(config: dict, now=None) -> dict:
         }
         for client in inbound.get("clientStats") or []:
             up, down, last_online = client_traffic(client)
-            label = mask_label(client.get("email"))
+            label = client_label(client.get("email"))
             traffic["clients"][label] = {
                 "up": up,
                 "down": down,
@@ -598,7 +622,7 @@ def gather_panel(config: dict, end_us: int):
             expiry_ms = int(client.get("expiryTime") or 0)
             used = int(client.get("up") or up) + int(client.get("down") or down)
             data["clients"].append({
-                "label": mask_label(client.get("email")),
+                "label": client_label(client.get("email")),
                 "inbound": str(inbound.get("remark") or ""),
                 "enable": bool(client.get("enable", True)),
                 "silent_days": (now_ms - last_online) / 86400000 if last_online else None,
@@ -662,7 +686,26 @@ def _matplotlib():
 
         matplotlib.use("Agg")
         from matplotlib import pyplot as plt
+    except ImportError:
+        return None
+    style = Path(os.environ.get("SKIBIDI_MPLSTYLE_FILE", "/etc/skibidi/ddlc.mplstyle"))
+    if style.is_file():
+        # The real theme, exactly as its own repo generated it: series order,
+        # faces, grid and titles all come from the one file the deploy carried
+        plt.style.use(os.fspath(style))
+    font_file = Path(os.environ.get("SKIBIDI_CHART_FONT_FILE", "/etc/skibidi/chart-font.otf"))
+    if font_file.is_file():
+        # The data face the tables are set in, taught to matplotlib for this
+        # process: axis text then matches the letter around the chart
+        from matplotlib import font_manager
 
+        font_manager.fontManager.addfont(os.fspath(font_file))
+        family = font_manager.FontProperties(fname=os.fspath(font_file)).get_name()
+        plt.rcParams["font.family"] = family
+        # The pixel face has one weight; asking for bold just logs a fallback
+        plt.rcParams["axes.titleweight"] = "normal"
+    if not style.is_file():
+        # A machine nobody themed still charts, in the neutral palette
         for key, value in {
             "axes.edgecolor": PALETTE["ash"],
             "axes.facecolor": PALETTE["paper"],
@@ -677,18 +720,41 @@ def _matplotlib():
             "legend.frameon": False,
         }.items():
             plt.rcParams[key] = value
-        return plt
-    except ImportError:
-        return None
+    return plt
 
 
-def save_png(plt, figure) -> bytes:
+def chart_cycle(plt) -> list:
+    # The active style owns the series order — it carries the theme's own
+    # colour-blindness guarantees, which a reshuffle here would silently void
+    cycle = list(plt.rcParams["axes.prop_cycle"].by_key().get("color") or [])
+    return cycle or PALETTE["cycle"]
+
+
+def save_png(plt, figure, transparent=False) -> bytes:
     import io
 
     output = io.BytesIO()
-    figure.savefig(output, format="png", dpi=140)
+    figure.savefig(output, format="png", dpi=140, transparent=transparent)
     plt.close(figure)
     return output.getvalue()
+
+
+def scribble_bar(plt, share):
+    """A meter drawn by hand, tidily: the xkcd wobble on two flat bars — the
+    theme's accent over a track in the divider, mako's `progress-color over …`
+    once more. Rendered as an image because inline CSS cannot scribble."""
+    with plt.xkcd(scale=0.8, length=120, randomness=1.5):
+        figure, axis = plt.subplots(figsize=(5.6, 0.34))
+        axis.set_xlim(0, 1)
+        axis.set_ylim(0, 1)
+        axis.axis("off")
+        axis.barh([0.5], [1.0], height=0.6,
+                  color=PALETTE["divider"], edgecolor=PALETTE["divider"])
+        if share > 0:
+            axis.barh([0.5], [max(share, 0.03)], height=0.6,
+                      color=PALETTE["accent"], edgecolor=PALETTE["accent"])
+        figure.subplots_adjust(left=0.01, right=0.99, top=0.95, bottom=0.05)
+        return save_png(plt, figure, transparent=True)
 
 
 def tidy(axis):
@@ -706,13 +772,13 @@ def chart_traffic(inbound_series):
     figure, axis = plt.subplots(figsize=(10, 3.2))
     bottoms = [0.0] * len(inbound_series)
     labels = [day.strftime("%a %d") for day, _t in inbound_series]
-    colors = PALETTE["cycle"]
+    colors = chart_cycle(plt)
     for index, name in enumerate(names):
         values = [totals.get(name, 0) / 2**30 for _day, totals in inbound_series]
         axis.bar(labels, values, bottom=bottoms, label=name, color=colors[index % len(colors)])
         bottoms = [b + v for b, v in zip(bottoms, values)]
     axis.set_ylabel("GiB per day")
-    axis.set_title("Traffic by inbound", loc="left", fontweight="bold")
+    axis.set_title("Traffic by inbound", loc="left")
     axis.legend(fontsize=8)
     tidy(axis)
     figure.tight_layout()
@@ -729,7 +795,7 @@ def chart_security(bans_by_day, drops_by_day, days):
              color=PALETTE["warn"])
     axis.plot(labels, [drops_by_day.get(day, 0) for day in days], label="ufw drops",
               color=PALETTE["ink"], marker="o", linewidth=1.2)
-    axis.set_title("Bans and drops", loc="left", fontweight="bold")
+    axis.set_title("Bans and drops", loc="left")
     axis.legend(fontsize=8)
     tidy(axis)
     figure.tight_layout()
@@ -743,12 +809,12 @@ def chart_load(exports):
     if not plt or not rows:
         return None
     figure, axis = plt.subplots(figsize=(10, 2.8))
-    colors = PALETTE["cycle"]
+    colors = chart_cycle(plt)
     for index, (name, data) in enumerate(sorted(rows.items())):
         stamps = [dt.datetime.fromtimestamp(ts / 1_000_000, dt.UTC) for ts, _d, _v in data]
         axis.plot(stamps, [v for _ts, _d, v in data], label=name,
                   color=colors[index % len(colors)], linewidth=1)
-    axis.set_title("Load", loc="left", fontweight="bold")
+    axis.set_title("Load", loc="left")
     axis.legend(fontsize=8)
     tidy(axis)
     figure.tight_layout()
@@ -771,54 +837,142 @@ def render_charts(data) -> dict[str, bytes]:
 # ---------------------------------------------------------------- rendering
 
 
-def bar_rows(rows, color, unit="", value_format=str):
-    top = max((count for _label, count in rows), default=0) or 1
-    cells = []
-    for label, count in rows:
-        share = count / top
-        cells.append(
-            "<tr>"
-            f'<td style="padding:3px 10px 3px 0;color:{PALETTE["ink"]};'
-            f'font-size:13px;white-space:nowrap">{html.escape(str(label))}</td>'
-            f'<td style="padding:3px 0;width:55%"><div style="background:{color};'
-            f'height:10px;border-radius:3px;width:{max(2, round(share * 100))}%"></div></td>'
-            f'<td style="padding:3px 0 3px 10px;color:{PALETTE["ink"]};font-size:13px;'
-            f'text-align:right">{html.escape(value_format(count))}{unit}</td>'
-            "</tr>"
-        )
-    return '<table style="border-collapse:collapse;width:100%">' + "".join(cells) + "</table>"
+# The layout follows the theme's own report stylesheet, spelled as inline
+# styles because mail clients strip <style> blocks: prose on the ground
+# colour, headings underlined by the divider, tables ruled between rows only,
+# and nothing shaped like a card
+
+# The system's own pairing: Doki (the game's face) for headings and prose,
+# DepartureMono for data — mail clients load no web fonts, so the letter names
+# the faces installed on the reader's machines and degrades to honest stacks
+FONT_PROSE = "Doki, Spectral, Georgia, 'Times New Roman', serif"
+FONT_DATA = ("'DepartureMono Nerd Font Mono', 'DepartureMono Nerd Font', "
+             "'Departure Mono', ui-monospace, 'SF Mono', Menlo, monospace")
 
 
-def card(title, body):
-    return (
-        f'<div style="background:{PALETTE["paper"]};border-radius:10px;'
-        'padding:18px 20px;margin:0 0 14px">'
-        f'<h2 style="margin:0 0 10px;font-size:15px;color:{PALETTE["ink"]}">'
-        f"{html.escape(title)}</h2>{body}</div>"
+def heading(title):
+    # Doki has one weight; a synthetic bold smears it. Size and the divider
+    # carry the hierarchy instead
+    return (f'<h2 style="margin:32px 0 8px;font-size:19px;line-height:1.25;'
+            f'font-weight:normal;color:{PALETTE["ink"]}">{html.escape(title)}</h2>')
+
+
+def muted(text, size=13):
+    return (f'<p style="margin:2px 0 10px;font-size:{size}px;'
+            f'color:{PALETTE["muted"]}">{html.escape(text)}</p>')
+
+
+def prose(text):
+    return (f'<p style="margin:8px 0;font-size:14px;line-height:1.55;'
+            f'color:{PALETTE["ink"]}">{html.escape(text)}</p>')
+
+
+def stat_tiles(pairs):
+    """A handful of headline numbers is a KPI row, not a table: sentence-case
+    label in the prose face, the value large in the data face. No synthetic
+    bold — a pixel face carries hierarchy by size alone."""
+    cells = "".join(
+        '<td style="padding:14px 28px 14px 0;vertical-align:top">'
+        f'<div style="font-size:13px;color:{PALETTE["muted"]};'
+        f'font-family:{FONT_PROSE}">{html.escape(str(label))}</div>'
+        f'<div style="font-size:24px;color:{PALETTE["ink"]};'
+        f'font-family:{FONT_DATA};line-height:1.3">{html.escape(str(value))}</div></td>'
+        for label, value in pairs
     )
+    return f'<table style="border-collapse:collapse;margin:2px 0"><tr>{cells}</tr></table>'
+
+
+def table(headers, rows, numeric=()):
+    """The stylesheet's table: rules between rows only, no vertical lines, the
+    header underlined a shade darker. Numeric columns are right-aligned in the
+    sans with tabular figures, because digits only line up when every digit is
+    the width of a zero."""
+    def th_cell(index, header):
+        align = "right" if index in numeric else "left"
+        return (f'<th style="text-align:{align};font-size:11px;'
+                f'font-family:{FONT_DATA};font-weight:normal;color:{PALETTE["muted"]};'
+                f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["muted"]}">'
+                f"{html.escape(str(header))}</th>")
+
+    def td_cell(index, cell):
+        if str(cell).startswith("<div"):
+            style = (f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["ash"]};'
+                     "vertical-align:middle")
+            return f'<td style="{style}">{cell}</td>'
+        if index in numeric:
+            # The data face is monospaced, so digits line up by construction
+            style = (f'font-size:12px;color:{PALETTE["ink"]};font-family:{FONT_DATA};'
+                     "text-align:right;"
+                     f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["ash"]}')
+        else:
+            style = (f'font-size:14px;color:{PALETTE["ink"]};font-family:{FONT_PROSE};'
+                     f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["ash"]}')
+        return f'<td style="{style}">{html.escape(str(cell))}</td>'
+
+    th = "".join(th_cell(index, header) for index, header in enumerate(headers))
+    body = "".join(
+        "<tr>" + "".join(td_cell(index, cell) for index, cell in enumerate(row)) + "</tr>"
+        for row in rows
+    )
+    return ('<table style="border-collapse:collapse;width:100%;margin:6px 0 4px">'
+            f"<tr>{th}</tr>{body}</table>")
+
+
+def bar(share, color, segments=16):
+    """The CSS fallback meter, for a machine without matplotlib: discrete
+    cells with a surface gap stretched across the column, the unfilled track
+    in a light step of the theme."""
+    filled = max(1, round(share * segments)) if share > 0 else 0
+    cells = "".join(
+        f'<td style="height:10px;font-size:0;line-height:0;'
+        f'background:{color if index < filled else PALETTE["divider"]}"></td>'
+        for index in range(segments)
+    )
+    return ('<div><table style="border-collapse:separate;border-spacing:2px 0;'
+            f'width:100%;max-width:320px"><tr>{cells}</tr></table></div>')
+
+
+def render_meters(data, charts) -> list:
+    """Every meter image, drawn before any HTML exists: the attachments are
+    decided in one place, and the HTML renderer stays a pure reader of them.
+    Returns one table cell per client — the scribbled image where charts
+    render at all, the segmented CSS meter where they cannot."""
+    deltas = (data.get("client_deltas") or [])[:10]
+    if not deltas:
+        return []
+    top = max(delta for _label, delta in deltas) or 1
+    plt = _matplotlib()
+    cells = []
+    for index, (_label, delta) in enumerate(deltas):
+        share = delta / top
+        if plt is None:
+            cells.append(bar(share, PALETTE["accent"]))
+        else:
+            charts[f"meter-{index}"] = scribble_bar(plt, share)
+            cells.append(f'<div><img src="cid:skibidi-meter-{index}" alt="" '
+                         'style="width:100%;max-width:320px;height:auto;display:block"></div>')
+    return cells
 
 
 def chart_image(name):
     return (
         f'<img src="cid:skibidi-{name}" alt="{name} chart" '
-        'style="max-width:100%;height:auto;display:block;margin:0 0 10px">'
+        'style="max-width:100%;height:auto;display:block;margin:10px 0 4px">'
     )
 
 
-def kpi_row(pairs):
-    cells = "".join(
-        '<td style="text-align:center;padding:10px 6px">'
-        f'<div style="font-size:24px;font-weight:bold;color:{PALETTE["ink"]}">'
-        f"{html.escape(str(value))}</div>"
-        f'<div style="font-size:11px;color:{PALETTE["muted"]};'
-        f'text-transform:uppercase;letter-spacing:0.5px">{html.escape(label)}</div></td>'
-        for label, value in pairs
+def inform_dialog(title, items):
+    # The game's own dialog box, not a stripe-edged callout: a pink ground
+    # framed on all sides, everything centred, the ink doing the talking
+    lines = "".join(f'<li style="margin:5px 0">{html.escape(item)}</li>' for item in items)
+    return (
+        f'<div style="background:{PALETTE["inform_bg"]};border:2px solid '
+        f'{PALETTE["inform_border"]};border-radius:6px;'
+        f'padding:20px 24px;margin:18px 0;color:{PALETTE["ink"]};text-align:center">'
+        f'<div style="font-size:17px;font-weight:normal">{html.escape(title)}</div>'
+        f'<ul style="margin:8px 0 0;padding:0;list-style:none;font-size:14px">'
+        f"{lines}</ul></div>"
     )
-    return '<table style="border-collapse:collapse;width:100%"><tr>' + cells + "</tr></table>"
-
-
-def paragraph(text):
-    return f'<p style="margin:8px 0 0;font-size:13px;color:{PALETTE["ink"]}">{html.escape(text)}</p>'
 
 
 def overview_pairs(data):
@@ -839,106 +993,120 @@ def render_html(data, charts):
     sections = []
     alerts = data.get("alerts") or []
     if alerts:
-        items = "".join(f"<li>{html.escape(alert)}</li>" for alert in alerts)
-        sections.append(
-            f'<div style="background:{PALETTE["blush"]};border-left:6px solid '
-            f'{PALETTE["warn"]};border-radius:6px;padding:14px 18px;margin:0 0 14px;'
-            f'color:{PALETTE["warn"]}"><strong>Needs attention</strong>'
-            f'<ul style="margin:8px 0 0;padding-left:20px">{items}</ul></div>'
-        )
+        sections.append(inform_dialog("Needs attention", alerts))
 
-    sections.append(card("Overview", kpi_row(overview_pairs(data))))
+    sections.append(heading("Overview"))
+    sections.append(stat_tiles(overview_pairs(data)))
 
     traffic_parts = []
     if "traffic" in charts:
         traffic_parts.append(chart_image("traffic"))
     client_deltas = data.get("client_deltas") or []
     if client_deltas:
-        traffic_parts.append(bar_rows(client_deltas[:10], PALETTE["accent"],
-                                      value_format=format_bytes))
+        meters = data.get("meter_cells") or []
+        top = max(delta for _l, delta in client_deltas) or 1
+        traffic_parts.append(table(
+            ["client", "", "over the week"],
+            [[label,
+              meters[index] if index < len(meters) else bar(delta / top, PALETTE["accent"]),
+              format_bytes(delta)]
+             for index, (label, delta) in enumerate(client_deltas[:10])],
+            numeric=(2,),
+        ))
     silent = [c for c in (data.get("panel") or {}).get("clients", [])
               if c["enable"] and c["silent_days"] is not None and c["silent_days"] >= 30]
     if silent:
         names = ", ".join(sorted(c["label"] for c in silent))
-        traffic_parts.append(paragraph(f"Silent for a month or more: {names}"))
+        traffic_parts.append(prose(f"Silent for a month or more: {names}"))
     if traffic_parts:
-        sections.append(card("Traffic and clients", "".join(traffic_parts)))
+        sections.append(heading("Traffic and clients"))
+        sections.extend(traffic_parts)
 
     health = data.get("health") or []
     if health:
+        sections.append(heading("System health"))
+        if "load" in charts:
+            sections.append(chart_image("load"))
         rows = []
         for row in health:
-            notes = []
-            if row["uptime"] is not None:
-                notes.append(f"up {row['uptime'] / 86400:.0f}d")
-            if row["load_max"] is not None:
-                notes.append(f"load peak {row['load_max']:.2f}")
-            if row["disk_last"] is not None:
-                notes.append(f"disk {row['disk_last']:.0%}")
-            if row["conntrack_max"] is not None:
-                notes.append(f"conntrack peak {row['conntrack_max']:.1%}")
-            if row["stuck_last"] is not None:
-                notes.append(f"{int(row['stuck_last'])} untimed sockets")
-            if row["updates"] is not None:
-                notes.append(f"{int(row['updates'])} updates pending")
+            updates = f"{int(row['updates'])}" if row["updates"] is not None else "?"
             if row["reboot"]:
-                notes.append("reboot required")
-            rows.append(paragraph(f"{row['node']}: {', '.join(notes)}"))
-        body = "".join(rows)
-        if "load" in charts:
-            body = chart_image("load") + body
-        sections.append(card("System health", body))
+                updates += " · reboot required"
+            rows.append([
+                row["node"],
+                f"{row['uptime'] / 86400:.0f}d" if row["uptime"] is not None else "?",
+                f"{row['load_max']:.2f}" if row["load_max"] is not None else "?",
+                f"{row['disk_last']:.0%}" if row["disk_last"] is not None else "?",
+                f"{row['conntrack_max']:.1%}" if row["conntrack_max"] is not None else "?",
+                f"{int(row['stuck_last'])}" if row["stuck_last"] is not None else "?",
+                updates,
+            ])
+        sections.append(table(
+            ["node", "up", "load peak", "disk", "conntrack peak", "untimed sockets", "updates"],
+            rows, numeric=(1, 2, 3, 4, 5, 6)))
 
     security_parts = []
     if "security" in charts:
         security_parts.append(chart_image("security"))
     ssh_attempts = data.get("ssh_attempts") or {}
     if ssh_attempts:
-        security_parts.append(bar_rows(sorted(ssh_attempts.items()), PALETTE["warn"]))
+        security_parts.append(table(
+            ["node", "failed logins"], [list(pair) for pair in sorted(ssh_attempts.items())],
+            numeric=(1,)))
     if security_parts:
-        sections.append(card("Security", "".join(security_parts)))
+        sections.append(heading("Security"))
+        sections.extend(security_parts)
 
     fleet_parts = []
-    for node in (data.get("panel") or {}).get("nodes", []):
-        state = "online" if node["online"] else "OFFLINE"
-        detail = []
-        if node["latency_ms"] is not None:
-            detail.append(f"{node['latency_ms']} ms")
-        if node["xray_version"]:
-            detail.append(f"xray {node['xray_version']}")
-        if node["panel_version"]:
-            detail.append(f"panel {node['panel_version']}")
-        fleet_parts.append(paragraph(f"{node['name']}: {state}" +
-                                     (f" ({', '.join(detail)})" if detail else "")))
+    nodes = (data.get("panel") or {}).get("nodes", [])
+    if nodes:
+        fleet_parts.append(table(
+            ["node", "state", "latency", "xray", "panel"],
+            [[node["name"],
+              "online" if node["online"] else "OFFLINE",
+              f"{node['latency_ms']} ms" if node["latency_ms"] is not None else "?",
+              node["xray_version"] or "?",
+              node["panel_version"] or "?"] for node in nodes],
+            numeric=(2,),
+        ))
     restarts = data.get("unit_restart_deltas") or []
     if restarts:
-        fleet_parts.append(bar_rows(restarts, PALETTE["muted"], unit=" restarts"))
+        fleet_parts.append(table(["unit", "restarts"],
+                                 [[unit, delta] for unit, delta in restarts],
+                                 numeric=(1,)))
     versions = (data.get("panel") or {}).get("versions", {})
     if versions.get("master", {}).get("panel"):
         master = versions["master"]
-        fleet_parts.append(paragraph(
-            f"master: panel {master['panel']}" + (f", xray {master['xray']}" if master["xray"] else "")))
+        fleet_parts.append(muted(
+            f"master: panel {master['panel']}"
+            + (f", xray {master['xray']}" if master["xray"] else "")))
     if fleet_parts:
-        sections.append(card("Fleet state", "".join(fleet_parts)))
+        sections.append(heading("Fleet state"))
+        sections.extend(fleet_parts)
 
     changes = data.get("changes") or []
     if changes:
-        items = "".join(f"<li>{html.escape(line)}</li>" for line in changes)
-        sections.append(card(
-            "What changed this week",
-            f'<ul style="margin:0;padding-left:20px;font-size:13px;'
-            f'color:{PALETTE["ink"]}">{items}</ul>'))
+        sections.append(heading("What changed this week"))
+        items = "".join(
+            f'<li style="margin:3px 0">{html.escape(line)}</li>' for line in changes)
+        sections.append(
+            f'<ul style="margin:6px 0;padding-left:20px;font-size:14px;'
+            f'line-height:1.6;color:{PALETTE["ink"]}">{items}</ul>')
 
     start, end = data["start"], data["end"]
     return (
-        f'<div style="background:{PALETTE["ash"]};padding:18px;'
-        'font-family:-apple-system,Segoe UI,Roboto,sans-serif">'
-        f'<div style="max-width:720px;margin:0 auto">'
-        f'<h1 style="font-size:19px;color:{PALETTE["ink"]};margin:0 0 4px">Weekly VPN report</h1>'
-        f'<p style="margin:0 0 14px;font-size:12px;color:{PALETTE["muted"]}">'
-        f"{start:%Y-%m-%d %H:%M} — {end:%Y-%m-%d %H:%M} {html.escape(data['timezone'])}</p>"
-        + "".join(sections) +
-        "</div></div>"
+        f'<div style="background:{PALETTE["paper"]};color:{PALETTE["ink"]};'
+        f'font-family:{FONT_PROSE};line-height:1.55;padding:28px 20px 48px">'
+        f'<div style="max-width:736px;margin:0 auto">'
+        f'<h1 style="font-size:27px;line-height:1.25;font-weight:normal;'
+        f'color:{PALETTE["ink"]};'
+        f'margin:0;border-bottom:2px solid {PALETTE["divider"]};padding-bottom:6px">'
+        "Weekly VPN report</h1>"
+        + muted(f"{start:%Y-%m-%d %H:%M} — {end:%Y-%m-%d %H:%M} · {data['timezone']}")
+        + "".join(sections)
+        + f'<div style="border-top:2px solid {PALETTE["divider"]};margin-top:32px"></div>'
+        + muted("skibidi-report · the letter always goes out; partial numbers are named as partial", 12)
+        + "</div></div>"
     )
 
 
@@ -964,6 +1132,7 @@ def render_text(data):
 
 def build_message(data, sender, recipient):
     charts = render_charts(data)
+    data["meter_cells"] = render_meters(data, charts)
     message = EmailMessage()
     message["From"] = f"VPN fleet <{sender}>"
     message["To"] = recipient

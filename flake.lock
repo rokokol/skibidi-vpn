@@ -3,6 +3,7 @@
     "ddlc-palette": {
       "inputs": {
         "nixpkgs": [
+          "ddlc-themes",
           "nixpkgs"
         ]
       },
@@ -17,6 +18,27 @@
       "original": {
         "owner": "rokokol",
         "repo": "ddlc-palette",
+        "type": "github"
+      }
+    },
+    "ddlc-themes": {
+      "inputs": {
+        "ddlc-palette": "ddlc-palette",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788341256,
+        "narHash": "sha256-JHz0/6GZYqfJNoFYxpAbaEYMQeodFCjmMCSWZ5XlTG8=",
+        "owner": "rokokol",
+        "repo": "ddlc-themes",
+        "rev": "b4e45ed36cea0dfc0533037e2f5dc4b922a15716",
+        "type": "github"
+      },
+      "original": {
+        "owner": "rokokol",
+        "repo": "ddlc-themes",
         "type": "github"
       }
     },
@@ -38,7 +60,7 @@
     },
     "root": {
       "inputs": {
-        "ddlc-palette": "ddlc-palette",
+        "ddlc-themes": "ddlc-themes",
         "nixpkgs": "nixpkgs"
       }
     }

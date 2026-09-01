@@ -20,3 +20,6 @@ __pycache__/
 .venv/
 result
 result-*
+
+# Rendered letter showcases, rebuilt at will by tests/make-samples.py
+samples/

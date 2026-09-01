@@ -3,16 +3,19 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # The report's colours come from the palette repo the same way mail-node's
-    # do: locked here, updated by `nix flake update`, copied nowhere
-    ddlc-palette = {
-      url = "github:rokokol/ddlc-palette";
+    # The report's theme comes from the themes repo the same way mail-node's
+    # does: locked here, updated by `nix flake update`, copied nowhere. One
+    # input on purpose - the charts' mplstyle and the HTML's stylesheet are
+    # generated from one palette revision inside that repo, so consuming both
+    # from it makes the letter agree with itself by construction
+    ddlc-themes = {
+      url = "github:rokokol/ddlc-themes";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
   outputs =
-    { self, nixpkgs, ddlc-palette }:
+    { self, nixpkgs, ddlc-themes }:
     let
       systems = [
         "x86_64-linux"
@@ -50,10 +53,19 @@
             shellcheck
           ];
 
-          # Deploys run from this shell, and the reporter role reads this to
-          # carry the theme onto the master — the palette rides the lockfile,
-          # never a copy in a tracked file
-          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-palette.lib.palette;
+          # Deploys run from this shell, and the roles read these to carry the
+          # theme onto the nodes — the matplotlib style for the charts and the
+          # report stylesheet the HTML inlines its colours from, both riding
+          # the lockfile, never a copy in a tracked file
+          SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
+          SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
+          # Transitional: until the locked theme revision exports the critical
+          # variables itself, the character names ride along from the palette the
+          # theme was built from — reached through its graph, never a second pin
+          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-themes.inputs.ddlc-palette.lib.palette;
+          # The charts' text face, deployed to the master so matplotlib there
+          # letters its axes the way the tables around it are set
+          SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
 
           shellHook = ''
             export SKIBIDI_NODES_DIR="''${SKIBIDI_NODES_DIR:-$PWD/inventory/nodes}"
@@ -73,7 +85,13 @@
             # round trip proves nothing if no chart was ever attached
             (python3.withPackages (ps: with ps; [ matplotlib ]))
           ];
-          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-palette.lib.palette;
+          SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
+          SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
+          # Transitional: until the locked theme revision exports the critical
+          # variables itself, the character names ride along from the palette the
+          # theme was built from — reached through its graph, never a second pin
+          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-themes.inputs.ddlc-palette.lib.palette;
+          SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
         };
       });
 

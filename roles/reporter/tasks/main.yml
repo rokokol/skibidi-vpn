@@ -37,7 +37,27 @@
 # The theme rides the deploy: the dev shell exports the palette the flake is
 # locked to, and this carries it onto the master. Colours are not secrets, and
 # a deploy from outside the shell simply leaves the neutral defaults in place
+# Both halves of one theme, generated in one repo from one palette revision:
+# the mplstyle the charts apply verbatim (its series order carries the
+# colour-blindness guarantees) and the stylesheet whose :root variables the
+# HTML inlines. Recreating either here would be a copy that drifts
 - name: Carry the theme the flake is locked to
+  ansible.builtin.copy:
+    src: "{{ lookup('env', item.env) }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { env: SKIBIDI_MPLSTYLE, dest: /etc/skibidi/ddlc.mplstyle }
+    - { env: SKIBIDI_REPORT_CSS, dest: /etc/skibidi/ddlc-report.css }
+    - { env: SKIBIDI_CHART_FONT, dest: /etc/skibidi/chart-font.otf }
+  when: lookup('env', item.env) | length > 0
+
+# Checker delivers the same file to every node later in the play; this copy
+# exists so the deploy-time rehearsal on a fresh master already renders its
+# needs-attention box at the mako critical level rather than in the fallback
+- name: Carry the palette the alert levels are named in
   ansible.builtin.copy:
     content: "{{ lookup('env', 'SKIBIDI_PALETTE_JSON') }}"
     dest: /etc/skibidi/palette.json

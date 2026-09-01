@@ -23,6 +23,9 @@ from zoneinfo import ZoneInfo
 # Before any chart renders: the deployed unit points this at the state dir,
 # and a test run must not try to write /var/lib
 os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="skibidi-mpl-")
+# A themed dev machine must not leak its own /etc/skibidi files into the tests
+os.environ["SKIBIDI_PALETTE_FILE"] = "/nonexistent/palette.json"
+os.environ["SKIBIDI_REPORT_CSS_FILE"] = "/nonexistent/ddlc-report.css"
 
 SCRIPT = (
     Path(__file__).resolve().parent.parent
@@ -57,15 +60,15 @@ def busy_data():
     data["bans_by_day"] = {data["start"].date(): 4}
     data["drops_by_day"] = {data["start"].date(): 120}
     data["exports"] = {
-        "se-1": {
+        "node-a": {
             "collected_through_us": 10**18,
             "samples": [[10**15, "load1", "", 0.5], [2 * 10**15, "load1", "", 1.5]],
         }
     }
     data["health"] = report.health_rows(data["exports"])
-    data["alerts"] = ["node ru-msk-1 did not answer the metrics pull"]
+    data["alerts"] = ["node node-b did not answer the metrics pull"]
     data["panel"] = {
-        "nodes": [{"name": "ru-msk-1", "online": True, "heartbeat": 0,
+        "nodes": [{"name": "node-b", "online": True, "heartbeat": 0,
                    "latency_ms": 42, "cpu": 1, "mem": 20,
                    "panel_version": "3.7.0", "xray_version": "25.1.1"}],
         "clients": [{"label": "<script>alert(1)</script>", "inbound": "SE-exit",
@@ -148,22 +151,17 @@ class TestAlerts(unittest.TestCase):
 
     def test_an_unreachable_node_is_said_not_smoothed_over(self):
         data = empty_data()
-        data["unreachable"] = [("ru-msk-1", "no answer")]
+        data["unreachable"] = [("node-b", "no answer")]
         alerts = report.collect_alerts(data)
-        self.assertTrue(any("ru-msk-1" in alert for alert in alerts))
+        self.assertTrue(any("node-b" in alert for alert in alerts))
 
 
-class TestMasking(unittest.TestCase):
-    def test_a_label_degrades_to_a_stub_not_to_nothing(self):
-        masked = report.mask_label("Artemiy")
-        self.assertNotEqual(masked, "Artemiy")
-        self.assertTrue(masked.startswith("Art"))
-
-    def test_short_labels_reveal_nothing(self):
-        self.assertEqual(report.mask_label("Jo"), "**")
-
-    def test_different_labels_stay_different(self):
-        self.assertNotEqual(report.mask_label("Dad"), report.mask_label("Mom"))
+class TestLabels(unittest.TestCase):
+    def test_the_operator_reads_their_own_labels_in_clear(self):
+        # The letter goes to the fleet's owner; masking their family's names
+        # from them protects nobody. The credential half is what stays out
+        self.assertEqual(report.client_label("Grandmother"), "Grandmother")
+        self.assertEqual(report.client_label(None), "")
 
 
 class TestCounters(unittest.TestCase):
@@ -228,28 +226,92 @@ class TestSnapshotDiff(unittest.TestCase):
         }
         sanitised = report.sanitise_inbound(inbound)
         flat = str(sanitised)
-        self.assertNotIn("11111111", flat)
-        self.assertNotIn("abcdef", flat)
-        self.assertNotIn("Grandmother", flat)
-        self.assertIn("Gra", flat.replace("Grandmother", ""))
+        self.assertNotIn("11111111", flat, "a client UUID is a credential")
+        self.assertNotIn("abcdef", flat, "a subscription id is a credential")
+        self.assertIn("Grandmother", flat, "a name is the operator's own handle, not a secret")
+
+
+class TestMplStyle(unittest.TestCase):
+    def test_a_delivered_style_file_owns_the_series_cycle(self):
+        style = Path(tempfile.mkdtemp(prefix="skibidi-style-")) / "test.mplstyle"
+        style.write_text("axes.prop_cycle: cycler('color', ['ABCDEF', '123456'])\n")
+        os.environ["SKIBIDI_MPLSTYLE_FILE"] = str(style)
+        try:
+            plt = report._matplotlib()
+            if plt is None:
+                self.skipTest("matplotlib is not available here")
+            cycle = [color.lstrip("#").upper() for color in report.chart_cycle(plt)]
+            self.assertEqual(cycle, ["ABCDEF", "123456"])
+        finally:
+            del os.environ["SKIBIDI_MPLSTYLE_FILE"]
+
+
+THEME_CSS = """
+:root {
+  --ddlc-ground: #FFFFFF;
+  --ddlc-ink: #222222;
+  --ddlc-muted: #B59CA1;
+  --ddlc-grid: #DADADA;
+  --ddlc-code-ground: #FFDBF0;
+  --ddlc-accent: #BB5599;
+  --ddlc-series-1: #BB5599;
+  --ddlc-series-2: #CC0C29;
+  --ddlc-series-3: #6868B4;
+  --ddlc-series-4: #76C332;
+  --ddlc-series-5: #6C4681;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ddlc-ground: #222222;
+    --ddlc-series-4: #B59CA1;
+    --ddlc-series-5: #B59CA1;
+  }
+}
+"""
 
 
 class TestPalette(unittest.TestCase):
-    def test_theme_names_fill_semantic_slots_and_the_cycle_keeps_its_order(self):
-        named = {"paper": "#FFFFFF", "ink": "#222222", "jacket": "#B59CA1",
-                 "ash": "#DADADA", "blush": "#FFBDE1", "bow": "#CC0C29",
-                 "plum": "#BB5599", "monikaEye": "#76C332", "rule": "#6868B4",
-                 "yuri": "#6C4681"}
-        palette = report.load_palette(named)
+    def test_the_light_root_block_fills_slots_and_the_cycle_keeps_its_order(self):
+        palette = report.load_palette(THEME_CSS)
         self.assertEqual(palette["warn"], "#CC0C29")
+        self.assertEqual(palette["paper"], "#FFFFFF")
         # The order is a deuteranopia guarantee, not a taste — see the theme
         self.assertEqual(palette["cycle"],
                          ["#BB5599", "#CC0C29", "#6868B4", "#76C332", "#6C4681"])
 
+    def test_the_dark_block_never_leaks_into_the_letter(self):
+        # Mail clients render on white, and the dark half of the stylesheet
+        # deliberately collapses two series into grey — a letter that parsed
+        # past the first block would inherit both surprises
+        palette = report.load_palette(THEME_CSS)
+        self.assertEqual(palette["ok"], "#76C332")
+        self.assertNotIn("#222222", [palette["paper"]])
+
     def test_an_unthemed_machine_still_renders(self):
-        palette = report.load_palette({})
+        palette = report.load_palette("")
         self.assertEqual(palette["ink"], report.PALETTE_DEFAULTS["ink"])
         self.assertEqual(len(palette["cycle"]), 5)
+
+    def test_the_inform_dialog_reads_from_the_stylesheet_first(self):
+        css = THEME_CSS.replace(
+            "--ddlc-series-1", "--ddlc-inform-ground: #FFDBF0;\n  --ddlc-inform-border: #FFBDE1;\n  --ddlc-series-1")
+        palette = report.load_palette(css)
+        self.assertEqual(palette["inform_bg"], "#FFDBF0")
+        self.assertEqual(palette["inform_border"], "#FFBDE1")
+
+    def test_the_character_names_remain_the_transitional_fallback(self):
+        # For a theme revision from before the stylesheet learned to say inform
+        import json
+
+        characters = Path(tempfile.mkdtemp(prefix="skibidi-pal-")) / "palette.json"
+        characters.write_text(json.dumps({"dot": "#FFDBF0", "blush": "#FFBDE1"}))
+        os.environ["SKIBIDI_PALETTE_FILE"] = str(characters)
+        try:
+            palette = report.load_palette(THEME_CSS)
+            self.assertEqual(palette["inform_bg"], "#FFDBF0")
+            self.assertEqual(palette["inform_border"], "#FFBDE1")
+        finally:
+            os.environ["SKIBIDI_PALETTE_FILE"] = "/nonexistent/palette.json"
 
 
 class TestTrafficSeries(unittest.TestCase):
