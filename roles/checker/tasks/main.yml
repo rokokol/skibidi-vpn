@@ -84,11 +84,15 @@
 - name: Apply the unit changes before enabling the timer
   ansible.builtin.meta: flush_handlers
 
+# Skipped in check mode: the unit file it enables is written by this same play,
+# and a dry run deliberately does not write it, so systemd is asked about a
+# timer that does not exist yet
 - name: Enable the timer
   ansible.builtin.systemd_service:
     name: skibidi-check.timer
     enabled: true
     state: started
+  when: not ansible_check_mode
 
 # Running it once here means a node is never deployed into a state its own
 # checks reject - and the first alert arrives now, in front of someone, rather
@@ -98,12 +102,13 @@
     argv: [/usr/local/sbin/skibidi-check]
   register: checker_first_run
   changed_when: false
-  check_mode: false
   failed_when: false
+  when: not ansible_check_mode
 
 - name: Report what the node says about itself
   ansible.builtin.debug:
     msg: "{{ checker_first_run.stdout_lines }}"
+  when: not ansible_check_mode
 
 - name: Fail the deploy if the node does not pass its own checks
   ansible.builtin.assert:
