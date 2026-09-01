@@ -7,4 +7,6 @@
     - firewall
     - tailscale
     - xui
+    - fail2ban
     - nginx
+    - checker

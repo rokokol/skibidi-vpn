@@ -1,0 +1,138 @@
+---
+# This role runs after `xui` on purpose. The panel's own management script writes
+# /etc/fail2ban/filter.d/3x-ipl.conf and action.d/3x-ipl.conf itself, so a role
+# that runs before the panel is installed has its work overwritten the moment
+# the installer runs - visible only as a second play that keeps finding the same
+# work to do. Ours goes last and stays, and the difference is deliberate: the
+# panel's ban closes every port, while this one leaves SSH and the panel port
+# open, because a ban that catches your own address must not lock you out of the
+# machine you would fix it from.
+- name: Install fail2ban and what its actions call
+  ansible.builtin.apt:
+    name: [fail2ban, nftables, iptables]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# The panel writes here, and the jail reads it. Created by this role because the
+# jail refuses to start on a logpath that does not exist, and the panel only
+# creates it the first time it has something to say
+- name: Make the directory the panel logs bans into
+  ansible.builtin.file:
+    path: "{{ fail2ban_ipl_logpath | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: fail2ban_ipl_enabled
+
+- name: Make sure the log the jail watches exists
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    content: ""
+    force: false
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "{{ fail2ban_ipl_logpath }}"
+    - "{{ fail2ban_ipl_logpath | dirname }}/3xipl-banned.log"
+  when: fail2ban_ipl_enabled
+
+# The panel owns the format of the log this filter reads, and changes it in its
+# own releases, so its filter is the one that stays correct. This role leaves it
+# alone where it exists and only supplies one where the panel never wrote it -
+# a jail whose filter is missing does not load at all
+- name: Look for the filter the panel installs
+  ansible.builtin.stat:
+    path: /etc/fail2ban/filter.d/3x-ipl.conf
+  register: fail2ban_panel_filter
+  when: fail2ban_ipl_enabled
+
+- name: Supply a filter only if the panel never wrote one
+  ansible.builtin.template:
+    src: filter-3x-ipl.conf.j2
+    dest: /etc/fail2ban/filter.d/3x-ipl.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - fail2ban_ipl_enabled
+    - not fail2ban_panel_filter.stat.exists
+  notify: Restart fail2ban
+
+- name: Say which filter is in use
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'using the panel-installed 3x-ipl filter, which tracks its log format'
+         if fail2ban_panel_filter.stat.exists
+         else 'the panel installed no 3x-ipl filter, so this role supplied one' }}
+  when: fail2ban_ipl_enabled
+
+# The action is policy, not format: what a ban closes, and for how long, is a
+# decision that belongs in the registry and has to survive a panel reinstall.
+# The panel's own version spares SSH and its port, which leaves a banned client
+# a way in that it does not need - administration arrives over the tunnel, and
+# the tunnel is excluded from banning entirely
+- name: Install the action that decides what a ban closes
+  ansible.builtin.template:
+    src: action-3x-ipl.conf.j2
+    dest: /etc/fail2ban/action.d/3x-ipl.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: fail2ban_ipl_enabled
+  notify: Restart fail2ban
+
+# The panel writes its own jail file declaring the same jail. Two declarations
+# are resolved by filename order, which happens to favour ours and reads as an
+# accident - so the panel's is removed and this role's file is the only place
+# the jail is defined. The panel recreates it if its menu is used again, and the
+# next play takes it back
+- name: Remove the panel's own jail declaration
+  ansible.builtin.file:
+    path: /etc/fail2ban/jail.d/3x-ipl.conf
+    state: absent
+  when: fail2ban_ipl_enabled
+  notify: Restart fail2ban
+
+- name: Declare the jails
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.d/skibidi.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Enable and start fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+    state: started
+
+- name: Apply pending restarts before asking what is running
+  ansible.builtin.meta: flush_handlers
+
+# A jail present in the configuration and a jail fail2ban actually loaded are
+# different things: a filter that does not match its log makes fail2ban drop the
+# jail with a line in its own log and carry on
+- name: Ask fail2ban which jails it loaded
+  ansible.builtin.command:
+    argv: [fail2ban-client, status]
+  register: fail2ban_status
+  changed_when: false
+  check_mode: false
+  retries: 5
+  delay: 3
+  until: fail2ban_status.rc == 0
+
+- name: Every declared jail is loaded
+  ansible.builtin.assert:
+    that: item in fail2ban_status.stdout
+    fail_msg: >-
+      fail2ban did not load the {{ item }} jail; it is configured but not
+      running, so nothing is being banned by it
+  loop: "{{ ['sshd'] + (['recidive'] if fail2ban_recidive_enabled else [])
+            + (['3x-ipl'] if fail2ban_ipl_enabled else []) }}"
+  when: not ansible_check_mode

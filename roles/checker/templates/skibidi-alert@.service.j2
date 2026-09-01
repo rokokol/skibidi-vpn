@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Mail the journal of %i, which failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-alert %i

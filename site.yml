@@ -7,6 +7,8 @@
     - firewall
     - tailscale
     - xui
+    - fail2ban
     - role: certs
       when: certs_domain | default('') | length > 0
     - nginx
+    - checker

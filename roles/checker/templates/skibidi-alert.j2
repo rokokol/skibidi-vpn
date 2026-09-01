@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Sent by systemd when a unit fails. The failing unit's name arrives as $1, and
+# what it printed is in the journal - so the mail carries the run's own output
+# rather than a generic "something failed".
+
+set -uo pipefail
+
+unit=${1:-unknown}
+to=$(cat /etc/skibidi/alert-to 2>/dev/null)
+[ -n "$to" ] || exit 0
+
+# The journal of *this* run, not of every run of this unit. Without the
+# invocation id an alert about today's failure quotes last week's.
+invocation=$(systemctl show -p InvocationID --value "$unit" 2>/dev/null)
+if [ -n "$invocation" ]; then
+    body=$(journalctl _SYSTEMD_INVOCATION_ID="$invocation" --no-pager -o cat 2>/dev/null)
+else
+    body=$(journalctl -u "$unit" -n 50 --no-pager -o cat 2>/dev/null)
+fi
+
+# The last non-blank line is the summary the check prints deliberately, which
+# makes a phone notification useful without opening the mail
+subject=$(printf '%s\n' "$body" | grep -v '^\s*$' | tail -1)
+[ -n "$subject" ] || subject="$unit failed"
+
+# 8bit and utf-8 declared because journal lines are arbitrary bytes
+sendmail -t <<MAIL
+To: $to
+From: skibidi-vpn@$(hostname -f 2>/dev/null || hostname)
+Subject: [$(hostname)] $subject
+Auto-Submitted: auto-generated
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+$unit failed on $(hostname) at $(date -Is).
+
+$body
+MAIL

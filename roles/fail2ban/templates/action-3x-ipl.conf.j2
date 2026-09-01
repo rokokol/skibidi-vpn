@@ -1,0 +1,37 @@
+# {{ ansible_managed }}
+#
+# Bans every port for the address. Nothing is spared by default: administration
+# arrives over the tunnel, which the jail's ignoreip excludes from banning
+# entirely, and the panel listens on the tunnel address only - so an exception
+# would weaken the ban without buying a way back in.
+[Definition]
+actionstart = <iptables> -N f2b-<name>
+              <iptables> -A f2b-<name> -j RETURN
+              <iptables> -I <chain> -p <protocol> -j f2b-<name>
+
+actionstop = <iptables> -D <chain> -p <protocol> -j f2b-<name>
+             <actionflush>
+             <iptables> -X f2b-<name>
+
+actioncheck = <iptables> -n -L <chain> | grep -q 'f2b-<name>[ \t]'
+
+{% if fail2ban_ipl_exempt_ports %}
+actionban = <iptables> -I f2b-<name> 1 -s <ip> -m multiport ! --dports {{ fail2ban_ipl_exempt_ports }} -j REJECT --reject-with icmp-port-unreachable
+            echo "$(date -Is) BAN <ip>" >> /var/log/x-ui/3xipl-banned.log
+
+actionunban = <iptables> -D f2b-<name> -s <ip> -m multiport ! --dports {{ fail2ban_ipl_exempt_ports }} -j REJECT --reject-with icmp-port-unreachable
+              echo "$(date -Is) UNBAN <ip>" >> /var/log/x-ui/3xipl-banned.log
+{% else %}
+actionban = <iptables> -I f2b-<name> 1 -s <ip> -j REJECT --reject-with icmp-port-unreachable
+            echo "$(date -Is) BAN <ip>" >> /var/log/x-ui/3xipl-banned.log
+
+actionunban = <iptables> -D f2b-<name> -s <ip> -j REJECT --reject-with icmp-port-unreachable
+              echo "$(date -Is) UNBAN <ip>" >> /var/log/x-ui/3xipl-banned.log
+{% endif %}
+
+[Init]
+name = 3X-IPL
+protocol = all
+chain = INPUT
+actionflush = <iptables> -F f2b-<name>
+iptables = iptables -w

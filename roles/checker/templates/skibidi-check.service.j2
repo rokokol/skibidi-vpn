@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Assert this node is in the state it was deployed into
+OnFailure=skibidi-alert@%n.service
+# Without these, Restart= on a failing unit never reaches the failed state and
+# OnFailure never fires
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-check

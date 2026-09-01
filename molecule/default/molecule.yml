@@ -10,11 +10,17 @@
 driver:
   name: default
   options:
-    managed: false
-    # molecule would otherwise try to create the login it needs
-    login_cmd_template: 'ssh -F .molecule-ssh-config skibidi-node'
+    # managed means this scenario supplies create.yml and destroy.yml, and tells
+    # molecule where the machine ended up through the instance config file it
+    # writes. The port is therefore chosen at boot rather than written here: a
+    # fixed one collides with a second run, or with a VM left behind by a
+    # crashed one, and fails during create complaining that SSH does not answer
+    managed: true
     ansible_connection_options:
       ansible_connection: ssh
+      ansible_ssh_common_args: >-
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o IdentitiesOnly=yes
 
 platforms:
   - name: skibidi-node
@@ -25,19 +31,9 @@ provisioner:
     ANSIBLE_ROLES_PATH: ../../roles
     ANSIBLE_HOST_KEY_CHECKING: "false"
   inventory:
-    hosts:
-      all:
-        hosts:
-          skibidi-node:
-            ansible_host: 127.0.0.1
-            ansible_port: 2222
-            ansible_user: molecule
-            ansible_become: true
-            ansible_ssh_private_key_file: ${MOLECULE_EPHEMERAL_DIRECTORY}/id_ed25519
-            ansible_ssh_common_args: >-
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
     host_vars:
       skibidi-node:
+        ansible_become: true
         # No tunnel in the VM, so the panel binds to loopback. The assertion
         # still means something: it proves the panel is not on 0.0.0.0
         xui_listen_ip: "127.0.0.1"
@@ -51,6 +47,15 @@ provisioner:
         # verifier needs them and vars_files would outrank everything above
         firewall_tcp_open: [22, 80, 443]
         xui_db: /etc/x-ui/x-ui.db
+        # No tunnel to a master and no mail relay reachable from here. Both are
+        # empty rather than pointed somewhere fake: a check against a stub
+        # proves the stub works
+        checker_master_url: ""
+        checker_smtp: ""
+        checker_alert_to: ""
+        # tailscaled is installed but never joins a tailnet in the VM, so it is
+        # not among the units whose health means anything here
+        checker_required_units: [x-ui, nginx, fail2ban]
 
 verifier:
   name: ansible

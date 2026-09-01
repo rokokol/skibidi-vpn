@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check this node regularly
+
+[Timer]
+OnBootSec={{ checker_boot_delay }}
+OnUnitActiveSec={{ checker_interval }}
+# Spread the fleet out so every node does not mail at the same second
+RandomizedDelaySec=5min
+# A node that was off still reports once it is back, rather than waiting for the
+# next scheduled moment
+Persistent=true
+
+[Install]
+WantedBy=timers.target

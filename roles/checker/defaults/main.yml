@@ -1,0 +1,33 @@
+---
+# How often the node checks itself. Ten minutes after boot so a node that came
+# back from a reboot says something, then every half hour
+checker_boot_delay: 10min
+checker_interval: 30min
+
+# Where a failure report goes. The mail host decides which nodes may use its
+# intake and authorises by source address, so this repository carries the
+# address of the intake and nothing about who is allowed to use it
+checker_alert_to: "{{ alert_to | default('') }}"
+checker_smtp: "{{ smtp | default('') }}"
+
+# The panel this node is driven by, if any. A node knows its own master - that
+# is a property of the node, not a copy of the fleet - and checking it is how a
+# dead master gets noticed at all: the master cannot report its own death, and
+# every alert that routes through it dies with it
+checker_master_url: "{{ master_url | default('') }}"
+checker_master_failures_before_alert: 3
+
+# Timers whose silence is itself the failure. systemd records when each last
+# fired; a timer that has not fired in well over its own interval is a mechanism
+# that stopped without saying so
+checker_watched_timers:
+  - name: skibidi-check.timer
+    max_silence_hours: 2
+  - name: xray-geodata-update.timer
+    max_silence_hours: 48
+
+# Units that must be running for the node to be doing its job
+checker_required_units: [x-ui, nginx, fail2ban, tailscaled]
+
+# fail2ban jails that must exist and answer
+checker_required_jails: [sshd]

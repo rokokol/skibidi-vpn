@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Everything this node claims about itself, asserted against the running
+# machine. Written to be read by whoever is woken up by its failure: each check
+# prints what is wrong and why it matters, and the last line printed is what the
+# alert mail puts in its subject.
+#
+# Exit 0 means every check passed. Any other exit means the node is not in the
+# state it was deployed into, and the OnFailure unit sends the journal.
+
+set -uo pipefail
+
+failures=0
+
+fail() {
+    printf 'FAIL %s\n' "$*"
+    failures=$((failures + 1))
+}
+
+ok() {
+    printf 'ok   %s\n' "$*"
+}
+
+# --- services ---------------------------------------------------------------
+
+for unit in {{ checker_required_units | join(' ') }}; do
+    if systemctl is-active --quiet "$unit"; then
+        ok "$unit is running"
+    else
+        fail "$unit is not running"
+    fi
+    if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+        fail "$unit is not enabled and will not survive a reboot"
+    fi
+done
+
+# --- kernel settings --------------------------------------------------------
+#
+# The file being correct is not the same as the kernel having taken it: a later
+# drop-in wins silently, and the node then runs with settings nobody chose.
+
+declared=$(grep -lE '^\s*net\.(core\.default_qdisc|ipv4\.tcp_congestion_control)' \
+    /etc/sysctl.conf /etc/sysctl.d/*.conf 2>/dev/null | wc -l)
+if [ "$declared" -eq 1 ]; then
+    ok "congestion control is declared in exactly one file"
+else
+    fail "$declared files declare congestion control; the last one read wins"
+fi
+
+for pair in "net.ipv4.tcp_congestion_control={{ common_congestion_control }}" \
+            "net.core.default_qdisc={{ common_qdisc }}" \
+            "net.netfilter.nf_conntrack_max={{ common_conntrack_max }}"; do
+    key=${pair%%=*}
+    want=${pair#*=}
+    have=$(sysctl -n "$key" 2>/dev/null)
+    if [ "$have" = "$want" ]; then
+        ok "$key is $have"
+    else
+        fail "$key is $have, expected $want"
+    fi
+done
+
+# The queue discipline has to be on the interface that carries the traffic, not
+# merely the default for new ones
+iface=$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')
+if [ -n "$iface" ]; then
+    if tc qdisc show dev "$iface" 2>/dev/null | grep -q '{{ common_qdisc }}'; then
+        ok "$iface uses {{ common_qdisc }}"
+    else
+        fail "$iface does not use {{ common_qdisc }}"
+    fi
+fi
+
+# --- conntrack pressure -----------------------------------------------------
+#
+# The table filling up drops connections with nothing in any log to say so
+
+max=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null || echo 0)
+count=$(sysctl -n net.netfilter.nf_conntrack_count 2>/dev/null || echo 0)
+if [ "$max" -gt 0 ]; then
+    used=$((count * 100 / max))
+    if [ "$used" -lt 80 ]; then
+        ok "conntrack ${used}% used ($count of $max)"
+    else
+        fail "conntrack ${used}% used ($count of $max); new connections will be dropped"
+    fi
+fi
+
+# --- firewall ---------------------------------------------------------------
+
+if ufw status 2>/dev/null | grep -q '^Status: active'; then
+    ok "ufw is active"
+else
+    fail "ufw is not active"
+fi
+
+{% if firewall_hide_tailscale_direct | default(true) %}
+# The legend rests on this: the address answering Reality on 443 must not also
+# emit WireGuard, or the two are trivially the same host
+if iptables -S ufw-before-output 2>/dev/null | grep -q -- '--sport {{ firewall_tailscale_port }} -j DROP'; then
+    ok "the tailscale direct path is dropped"
+else
+    fail "the tailscale drop rule is not loaded; this address emits WireGuard"
+fi
+
+# The port is written in two places and a drift makes the rule match nothing
+# while looking exactly as before
+daemon_port=$(. /etc/default/tailscaled 2>/dev/null; echo "${PORT:-}")
+if [ -z "$daemon_port" ] || [ "$daemon_port" = "{{ firewall_tailscale_port }}" ]; then
+    ok "tailscaled uses the port the rule drops"
+else
+    fail "tailscaled uses port $daemon_port but the rule drops {{ firewall_tailscale_port }}"
+fi
+{% endif %}
+
+# --- fail2ban ---------------------------------------------------------------
+
+for jail in {{ checker_required_jails | join(' ') }}; do
+    if fail2ban-client status "$jail" >/dev/null 2>&1; then
+        ok "fail2ban jail $jail answers"
+    else
+        fail "fail2ban jail $jail does not answer"
+    fi
+done
+
+{% if fail2ban_ipl_enabled | default(true) %}
+# A filter that no longer matches its log is the quiet failure here: the jail
+# loads, its status is green, and it bans nobody. The panel owns the log format
+# and can change it in any release, so the filter is tested against the log
+# rather than assumed to still fit it.
+log={{ fail2ban_ipl_logpath }}
+if [ -s "$log" ]; then
+    matched=$(fail2ban-regex "$log" /etc/fail2ban/filter.d/3x-ipl.conf 2>/dev/null \
+        | awk '/^Lines:/ {print}' | grep -oE '[0-9]+ matched' | grep -oE '^[0-9]+')
+    if [ "${matched:-0}" -gt 0 ]; then
+        ok "the 3x-ipl filter still matches the panel's log"
+    else
+        fail "the 3x-ipl filter matches nothing in $log; the panel changed its format and nobody is being banned"
+    fi
+else
+    ok "the panel has logged no address-limit events"
+fi
+{% endif %}
+
+# --- the panel --------------------------------------------------------------
+#
+# A panel on a public address exposes every client secret and every Reality
+# private key, so where it listens is checked rather than assumed
+
+listeners=$(ss -ltnH "sport = :{{ xui_panel_port }}" 2>/dev/null | awk '{print $4}')
+if [ -z "$listeners" ]; then
+    fail "nothing listens on the panel port {{ xui_panel_port }}"
+else
+    stray=$(printf '%s\n' "$listeners" | grep -v '{{ xui_listen_ip }}' || true)
+    if [ -z "$stray" ]; then
+        ok "the panel answers only on {{ xui_listen_ip }}"
+    else
+        fail "the panel also answers on $(echo "$stray" | tr '\n' ' ')"
+    fi
+fi
+
+# Every enabled inbound should have something listening for it. A port that
+# stopped answering is a protocol nobody can connect to, and the panel goes on
+# showing the inbound as enabled
+if [ -r {{ xui_db }} ]; then
+    while read -r port; do
+        [ -n "$port" ] || continue
+        if ss -lntuH "sport = :$port" 2>/dev/null | grep -q .; then
+            ok "inbound port $port is served"
+        else
+            fail "inbound port $port is enabled but nothing listens on it"
+        fi
+    done < <(sqlite3 {{ xui_db }} "select distinct port from inbounds where enable = 1" 2>/dev/null)
+fi
+
+# --- the timers that watch everything else ----------------------------------
+#
+# A watchdog that stopped cannot report that it stopped. systemd records when
+# each timer last fired, so silence past its own interval is the signal.
+
+{% for timer in checker_watched_timers %}
+if systemctl list-unit-files '{{ timer.name }}' 2>/dev/null | grep -q '{{ timer.name }}'; then
+    last=$(systemctl show -p LastTriggerUSec --value '{{ timer.name }}' 2>/dev/null)
+    if [ -z "$last" ] || [ "$last" = "n/a" ]; then
+        ok "{{ timer.name }} has not fired yet"
+    else
+        last_epoch=$(date -d "$last" +%s 2>/dev/null || echo 0)
+        age_hours=$(( ($(date +%s) - last_epoch) / 3600 ))
+        if [ "$last_epoch" -gt 0 ] && [ "$age_hours" -gt {{ timer.max_silence_hours }} ]; then
+            fail "{{ timer.name }} last fired ${age_hours}h ago, over its {{ timer.max_silence_hours }}h limit"
+        else
+            ok "{{ timer.name }} fired ${age_hours}h ago"
+        fi
+    fi
+fi
+{% endfor %}
+
+# --- the master -------------------------------------------------------------
+#
+# A master cannot report its own death, and an alert routed through it dies with
+# it. So each node watches its own master and mails directly, past it.
+
+{% if checker_master_url %}
+state=/var/lib/skibidi-check/master-failures
+mkdir -p "$(dirname "$state")"
+if curl -sk --max-time 10 -o /dev/null "{{ checker_master_url }}"; then
+    ok "the master answers"
+    printf '0' > "$state"
+else
+    seen=$(cat "$state" 2>/dev/null || echo 0)
+    seen=$((seen + 1))
+    printf '%s' "$seen" > "$state"
+    # A single miss is a network hiccup; a run of them is an outage. Counting
+    # across runs rather than retrying within one keeps a slow master from
+    # holding this script open
+    if [ "$seen" -ge {{ checker_master_failures_before_alert }} ]; then
+        fail "the master has not answered for $seen consecutive checks"
+    else
+        ok "the master missed a check ($seen of {{ checker_master_failures_before_alert }})"
+    fi
+fi
+{% endif %}
+
+# --- certificates -----------------------------------------------------------
+
+{% if certs_domain | default('') %}
+cert={{ certs_install_dir }}/{{ certs_fullchain_name }}
+if [ -r "$cert" ]; then
+    if openssl x509 -checkend $(( {{ certs_min_days_left }} * 86400 )) -noout -in "$cert" >/dev/null 2>&1; then
+        ok "the certificate has more than {{ certs_min_days_left }} days left"
+    else
+        fail "the certificate expires within {{ certs_min_days_left }} days"
+    fi
+else
+    fail "no certificate at $cert, which is where the panel reads it"
+fi
+{% endif %}
+
+# --- xray -------------------------------------------------------------------
+
+if [ -x /usr/local/x-ui/bin/xray-linux-amd64 ] && [ -r /usr/local/x-ui/bin/config.json ]; then
+    if /usr/local/x-ui/bin/xray-linux-amd64 run -test -config /usr/local/x-ui/bin/config.json >/dev/null 2>&1; then
+        ok "xray accepts its generated configuration"
+    else
+        fail "xray rejects its generated configuration; it is running on the last good one"
+    fi
+fi
+
+# The summary goes last on purpose: the alert mail takes the final line as its
+# subject, so it has to say how bad things are rather than what was checked last
+if [ "$failures" -eq 0 ]; then
+    printf 'all checks passed on %s\n' "$(hostname)"
+    exit 0
+fi
+printf '%s check(s) failed on %s\n' "$failures" "$(hostname)"
+exit 1

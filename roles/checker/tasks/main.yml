@@ -1,0 +1,113 @@
+---
+- name: Install what the checks and the mail path need
+  ansible.builtin.apt:
+    name: [curl, sqlite3, msmtp, msmtp-mta, iproute2, openssl]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# The intake authorises by source address and holds the list of who may use it,
+# so this node carries no credential - and therefore nothing here is secret
+- name: Point the mailer at the intake
+  ansible.builtin.copy:
+    dest: /etc/msmtprc
+    content: |
+      # Managed by skibidi-vpn.
+      # No authentication: the intake decides which nodes may use it by source
+      # address, which is why this node holds no mail credential at all.
+      defaults
+      logfile /var/log/msmtp.log
+      account intake
+      host {{ checker_smtp | regex_replace(':.*$', '') }}
+      port {{ checker_smtp | regex_replace('^.*:', '') }}
+      auth off
+      tls off
+      from skibidi-vpn@{{ inventory_hostname }}
+      account default : intake
+    owner: root
+    group: root
+    mode: "0644"
+  when: checker_smtp | length > 0
+
+- name: Make the directory the alert address lives in
+  ansible.builtin.file:
+    path: /etc/skibidi
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Record where a failure should be reported
+  ansible.builtin.copy:
+    dest: /etc/skibidi/alert-to
+    content: "{{ checker_alert_to }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: checker_alert_to | length > 0
+
+# Proven at deploy time rather than discovered on the night something breaks.
+# The mail host declares which nodes may use the intake; this only asks whether
+# it answers this one
+- name: Prove the alert intake answers this node
+  ansible.builtin.wait_for:
+    host: "{{ checker_smtp | regex_replace(':.*$', '') }}"
+    port: "{{ checker_smtp | regex_replace('^.*:', '') | int }}"
+    timeout: 15
+  when: checker_smtp | length > 0
+  check_mode: false
+
+- name: Install the check and the alert
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - { src: skibidi-check.j2, dest: /usr/local/sbin/skibidi-check }
+    - { src: skibidi-alert.j2, dest: /usr/local/sbin/skibidi-alert }
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - skibidi-check.service
+    - skibidi-check.timer
+    - skibidi-alert@.service
+  notify: Reload systemd
+
+- name: Apply the unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the timer
+  ansible.builtin.systemd_service:
+    name: skibidi-check.timer
+    enabled: true
+    state: started
+
+# Running it once here means a node is never deployed into a state its own
+# checks reject - and the first alert arrives now, in front of someone, rather
+# than at three in the morning
+- name: Run the checks once, now
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/skibidi-check]
+  register: checker_first_run
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Report what the node says about itself
+  ansible.builtin.debug:
+    msg: "{{ checker_first_run.stdout_lines }}"
+
+- name: Fail the deploy if the node does not pass its own checks
+  ansible.builtin.assert:
+    that: checker_first_run.rc == 0
+    fail_msg: >-
+      {{ checker_first_run.stdout_lines | select('match', '^FAIL') | list | join('; ') }}
+  when: not ansible_check_mode

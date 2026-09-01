@@ -13,6 +13,10 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - A molecule scenario that boots a real Ubuntu VM from a cloud image, applies every role, requires a second run to change nothing, and asserts the result against the running machine. QEMU is driven directly rather than through Vagrant, whose libvirt provider is a plugin nixpkgs does not carry
 - Ports that answer only named sources, so a subscription endpoint fronted by a CDN can be declared rather than hand-maintained
 - The full kernel tuning the fleet was running with: socket buffers sized for QUIC, TCP autotuning ceilings for a long path, MTU probing, and a bound on unsent bytes per socket
+- Role `fail2ban`, which had been configured by hand on the nodes and by nobody in the repository. Bans close every port rather than sparing SSH and the panel: administration arrives over the tunnel, which is excluded from banning entirely, so an exception only leaves a banned client a way in. The filter stays the panel's, because the panel owns the log format and changes it in its own releases; the policy is declared here so it survives a reinstall and reaches a new node without anyone opening a menu
+- Role `checker`, running on a timer, asserting the node is still in the state it was deployed into and mailing the journal of a failed run directly to the intake. It notices the failures that report nothing: a conntrack table filling up, an inbound whose port stopped answering, a drop rule present in the file but absent from the kernel, a tailscale port that drifted out of step with the rule that hides it, and a fail2ban filter that no longer matches the log it reads
+- A node watches its own master and mails past it. A master cannot report its own death, and every alert routed through it dies with it, so the node that notices is a different one. Three consecutive misses rather than one, counted across runs, so an outage is distinguished from a hiccup
+- Watchdogs are watched by their own silence: systemd records when each timer last fired, and a timer quiet well past its interval is a mechanism that stopped without saying so
 
 ### Fixed
 

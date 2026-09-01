@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+#
+# The panel logs a line naming the address it disconnected for exceeding a
+# client's address limit. Matching its own message means this jail never has to
+# guess what the limit is.
+[Definition]
+datepattern = ^%%Y/%%m/%%d %%H:%%M:%%S
+failregex   = \[LIMIT_IP\]\s*Email\s*=\s*<F-USER>.+</F-USER>\s*\|\|\s*SRC\s*=\s*<ADDR>
+ignoreregex =
