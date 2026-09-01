@@ -20,6 +20,10 @@ reporter_panel_url: "{{ panel | default('') }}"
 
 reporter_state_dir: /var/lib/skibidi-report
 
+# Overridable so a test can point the letter at a capture stub instead of a
+# mail path; production leaves it at the sendmail msmtp provides
+reporter_sendmail: /usr/sbin/sendmail
+
 reporter_weekday_index:
   Mon: 0
   Tue: 1

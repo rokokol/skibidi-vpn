@@ -24,6 +24,16 @@
     group: root
     mode: "0700"
 
+# Not left to the checker role: on a fresh master this role runs first, and a
+# config written into a directory another role owns is a deploy-order landmine
+- name: Make the directory the configuration lives in
+  ansible.builtin.file:
+    path: /etc/skibidi
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 # The theme rides the deploy: the dev shell exports the palette the flake is
 # locked to, and this carries it onto the master. Colours are not secrets, and
 # a deploy from outside the shell simply leaves the neutral defaults in place
@@ -81,7 +91,7 @@
 - name: Take the first snapshot, now
   ansible.builtin.command:
     argv: [/usr/local/sbin/skibidi-report, snapshot]
-  changed_when: true
+  changed_when: false
   when: not ansible_check_mode
 
 # Builds the entire letter — panel, SSH pulls, charts, both bodies — and

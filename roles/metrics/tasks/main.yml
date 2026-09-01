@@ -37,7 +37,7 @@
 - name: Take the first sample, now
   ansible.builtin.command:
     argv: [/usr/local/sbin/skibidi-metrics, collect]
-  changed_when: true
+  changed_when: false
   when: not ansible_check_mode
 
 - name: Prove the store answers with what was just written

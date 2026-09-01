@@ -16,8 +16,9 @@ verify_tls = false
 
 [paths]
 state_dir = "{{ reporter_state_dir }}"
+sendmail = "{{ reporter_sendmail }}"
 
-{% for host in groups['nodes'] | sort if host != inventory_hostname %}
+{% for host in groups['nodes'] | default([]) | sort if host != inventory_hostname %}
 # The address each node already answers its panel on: the tunnel, not the
 # public internet — the pull rides the same trust path administration does
 [[nodes]]

@@ -9,4 +9,6 @@
     - xui
     - fail2ban
     - nginx
+    - metrics
+    - reporter
     - checker

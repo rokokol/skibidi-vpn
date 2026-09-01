@@ -170,3 +170,75 @@
         fail_msg: >-
           the database holds {{ verify_binding.stdout | trim }}, not
           {{ xui_panel_port }}|{{ xui_base_path }}|{{ xui_listen_ip }}
+
+    # --- the weekly letter ----------------------------------------------------
+    #
+    # Sent for real, into a stub that keeps the bytes: what is asserted below is
+    # the exact message a Monday would hand to sendmail, not a rendering of it
+
+    - name: Install a sendmail that captures instead of mailing
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/capture-sendmail
+        content: |
+          #!/bin/sh
+          cat > /var/tmp/skibidi-letter.eml
+        owner: root
+        group: root
+        mode: "0755"
+      changed_when: false
+
+    # A letter left by an earlier run would let a send that silently did
+    # nothing pass every assertion below
+    - name: Forget any letter a previous run captured
+      ansible.builtin.file:
+        path: /var/tmp/skibidi-letter.eml
+        state: absent
+      changed_when: false
+
+    - name: Send the letter into the stub
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/skibidi-report, send]
+      changed_when: false
+
+    - name: Read the captured letter apart
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import email, email.policy, re, sys
+            with open("/var/tmp/skibidi-letter.eml", "rb") as handle:
+                message = email.message_from_binary_file(handle, policy=email.policy.default)
+            body = next(part for part in message.walk()
+                        if part.get_content_type() == "text/html").get_content()
+            referenced = set(re.findall(r'src="cid:([^"]+)"', body))
+            attached = {part["Content-ID"].strip("<>") for part in message.walk()
+                        if part.get_content_type() == "image/png"}
+            problems = []
+            if not message["Subject"] or "Weekly VPN report" not in message["Subject"]:
+                problems.append(f"subject is {message['Subject']!r}")
+            if message.get_content_type() != "multipart/alternative":
+                problems.append(f"outer type is {message.get_content_type()}")
+            if "<pre" in body or "<style" in body:
+                problems.append("the HTML carries a <pre> or <style> block")
+            if referenced != attached:
+                problems.append(f"cid mismatch: referenced {referenced}, attached {attached}")
+            if message["Auto-Submitted"] != "auto-generated":
+                problems.append("not marked auto-generated")
+            text = next((part for part in message.walk()
+                         if part.get_content_type() == "text/plain"), None)
+            if text is None or not text.get_content().strip():
+                problems.append("the text/plain alternative is missing or empty; "
+                                "a client without HTML sees nothing")
+            print("; ".join(problems) if problems else "letter ok")
+            sys.exit(1 if problems else 0)
+      register: verify_letter
+      changed_when: false
+      # The assert below owns the verdict; failing here would swallow the
+      # problem list and report only a return code
+      failed_when: false
+
+    - name: The letter is whole
+      ansible.builtin.assert:
+        that: verify_letter.rc == 0
+        fail_msg: "{{ verify_letter.stdout }}"
