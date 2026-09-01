@@ -15,3 +15,4 @@
     - role: reporter
       when: "'master' in group_names and reporter_to | length > 0"
     - checker
+    - cleanup

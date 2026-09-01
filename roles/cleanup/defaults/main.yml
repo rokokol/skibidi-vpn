@@ -1,0 +1,29 @@
+---
+# Named one by one rather than matched by a pattern. A glob over /usr/local/sbin
+# is how a cleanup role eventually deletes something it was never meant to
+# touch, and these names are known: they are what the predecessor of this
+# repository installed
+cleanup_legacy_units:
+  - vpn-infra-check.timer
+  - vpn-infra-check.service
+  - vpn-infra-alert@.service
+
+cleanup_legacy_files:
+  - /usr/local/sbin/vpn-infra-alert
+  - /usr/local/sbin/vpn-infra-apply-routing
+  - /usr/local/sbin/vpn-infra-apply-wireguard
+  - /usr/local/sbin/vpn-infra-check
+  - /usr/local/sbin/vpn-infra-deploy
+  - /usr/local/sbin/vpn-infra-probe
+  - /usr/local/sbin/vpn-infra-sub-check
+  - /etc/default/vpn-infra
+
+cleanup_legacy_directories:
+  - /usr/local/lib/vpn-infra
+  - /etc/vpn-infra
+
+# The sysctl drop-in the old fleet used. `common` writes its own under a
+# different name, and two files declaring the same keys means the later one
+# wins silently
+cleanup_legacy_sysctl:
+  - /etc/sysctl.d/60-vpn-infra.conf
