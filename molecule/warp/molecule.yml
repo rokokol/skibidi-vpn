@@ -1,0 +1,45 @@
+---
+# Run by hand, never on a push: `molecule test -s warp`.
+#
+# This scenario registers with Cloudflare, which creates account state on their
+# side and needs the internet from inside the VM. A check that depends on
+# somebody else's service goes red when they have an outage rather than when we
+# have a bug, so it must not gate anything - and it must not run unattended,
+# because every run leaves a registration behind.
+driver:
+  name: default
+  options:
+    managed: true
+    ansible_connection_options:
+      ansible_connection: ssh
+      ansible_ssh_common_args: >-
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o IdentitiesOnly=yes
+
+platforms:
+  - name: skibidi-node
+
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ../../roles
+    ANSIBLE_HOST_KEY_CHECKING: "false"
+  inventory:
+    host_vars:
+      skibidi-node:
+        ansible_become: true
+        # A short throttle so the test can watch a second restart be refused
+        # without waiting six hours for the real interval
+        warp_min_restart_interval: 60
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - destroy
+    - create
+    - converge
+    - idempotence
+    - verify
+    - destroy

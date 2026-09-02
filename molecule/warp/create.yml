@@ -1,0 +1,207 @@
+---
+# Build the VM from an Ubuntu cloud image and a cloud-init seed. Everything
+# lives in molecule's ephemeral directory, so a failed run leaves nothing behind
+# but a stopped QEMU process this playbook's counterpart kills.
+- name: Create a throwaway Ubuntu node
+  hosts: localhost
+  gather_facts: false
+  vars:
+    workdir: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}"
+    release: noble
+    # The image is ~600 MB, so it is cached outside the ephemeral directory:
+    # re-downloading it on every run would dominate the test time
+    cache: "{{ lookup('env', 'HOME') }}/.cache/skibidi-vpn"
+    image_url: >-
+      https://cloud-images.ubuntu.com/{{ release }}/current/{{ release }}-server-cloudimg-amd64.img
+    memory_mb: 2048
+
+  tasks:
+    # Asking the kernel for a free port rather than naming one. Two runs of this
+    # scenario, or a stray VM from a crashed run, otherwise collide on a fixed
+    # port and fail during create with a message about SSH not answering - which
+    # says nothing about the actual cause
+    - name: Take a port nobody is using
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import socket
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            print(s.getsockname()[1])
+            s.close()
+      register: free_port
+      changed_when: false
+
+    - name: Remember it for the rest of the play
+      ansible.builtin.set_fact:
+        ssh_port: "{{ free_port.stdout | trim | int }}"
+
+    - name: Make the cache and the working directory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ cache }}"
+        - "{{ workdir }}"
+
+    - name: Fetch the Ubuntu cloud image
+      ansible.builtin.get_url:
+        url: "{{ image_url }}"
+        dest: "{{ cache }}/{{ release }}-cloudimg-amd64.img"
+        mode: "0644"
+        timeout: 300
+
+    - name: Generate a key for this run only
+      ansible.builtin.command:
+        argv: [ssh-keygen, -t, ed25519, -N, "", -f, "{{ workdir }}/id_ed25519"]
+        creates: "{{ workdir }}/id_ed25519"
+
+    - name: Read the public half
+      ansible.builtin.slurp:
+        src: "{{ workdir }}/id_ed25519.pub"
+      register: pubkey
+
+    # A copy-on-write overlay: the download stays pristine, and destroying the
+    # VM is deleting one file
+    - name: Make a disposable disk backed by the image
+      ansible.builtin.command:
+        argv:
+          - qemu-img
+          - create
+          - -f
+          - qcow2
+          - -F
+          - qcow2
+          - -b
+          - "{{ cache }}/{{ release }}-cloudimg-amd64.img"
+          - "{{ workdir }}/disk.qcow2"
+          - 12G
+        creates: "{{ workdir }}/disk.qcow2"
+
+    - name: Write the cloud-init user data
+      ansible.builtin.copy:
+        dest: "{{ workdir }}/user-data"
+        mode: "0644"
+        content: |
+          #cloud-config
+          users:
+            - name: molecule
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              ssh_authorized_keys:
+                - {{ pubkey.content | b64decode | trim }}
+          # The suite is about roles, not about apt: an unattended upgrade
+          # running underneath would race every package task
+          package_update: false
+          package_upgrade: false
+          runcmd:
+            - systemctl disable --now unattended-upgrades apt-daily.timer apt-daily-upgrade.timer || true
+
+    - name: Write the cloud-init metadata
+      ansible.builtin.copy:
+        dest: "{{ workdir }}/meta-data"
+        mode: "0644"
+        content: |
+          instance-id: skibidi-molecule
+          local-hostname: skibidi-node
+
+    - name: Build the seed image
+      ansible.builtin.command:
+        argv:
+          - cloud-localds
+          - "{{ workdir }}/seed.iso"
+          - "{{ workdir }}/user-data"
+          - "{{ workdir }}/meta-data"
+        creates: "{{ workdir }}/seed.iso"
+
+    # A pidfile is not a running machine. `creates:` on it would skip the boot
+    # whenever a previous run died without cleaning up, leaving a play that waits
+    # for SSH on a VM that does not exist
+    - name: Look for a VM this scenario may already have running
+      ansible.builtin.shell:
+        cmd: |
+          pid=$(cat {{ workdir }}/qemu.pid 2>/dev/null) || exit 1
+          kill -0 "$pid" 2>/dev/null || exit 1
+          echo "$pid"
+      register: existing_vm
+      changed_when: false
+      failed_when: false
+
+    - name: Clear the remains of a VM that is no longer running
+      ansible.builtin.file:
+        path: "{{ workdir }}/qemu.pid"
+        state: absent
+      when: existing_vm.rc != 0
+
+    # User-mode networking with one forwarded port: no bridge, no libvirt, no
+    # root. The VM reaches the internet (it installs packages) and nothing on
+    # the network reaches the VM
+    - name: Boot the VM
+      ansible.builtin.shell:
+        cmd: >-
+          nohup qemu-system-x86_64
+          -name skibidi-molecule-{{ ssh_port }}
+          -machine accel=kvm:tcg -cpu host -smp 2 -m {{ memory_mb }}
+          -drive file={{ workdir }}/disk.qcow2,if=virtio
+          -drive file={{ workdir }}/seed.iso,if=virtio,format=raw
+          -netdev user,id=net0,hostfwd=tcp::{{ ssh_port }}-:22
+          -device virtio-net-pci,netdev=net0
+          -display none -daemonize
+          -serial file:{{ workdir }}/console.log
+          -pidfile {{ workdir }}/qemu.pid
+          > {{ workdir }}/qemu.log 2>&1
+      when: existing_vm.rc != 0
+      changed_when: true
+
+    - name: Wait for SSH to answer
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ ssh_port }}"
+        timeout: 300
+        delay: 5
+
+    # cloud-init is still creating the user when sshd starts, so a login can be
+    # refused for a while after the port opens
+    - name: Wait for the login cloud-init creates
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -i
+          - "{{ workdir }}/id_ed25519"
+          - -p
+          - "{{ ssh_port }}"
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - ConnectTimeout=5
+          # Offer the key this scenario generated and nothing else: an agent
+          # holding other keys spends the server's MaxAuthTries before reaching
+          # it, and the connection is closed mid-handshake
+          - -o
+          - IdentitiesOnly=yes
+          - molecule@127.0.0.1
+          - cloud-init status --wait
+      register: cloud_init
+      until: cloud_init.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    # The one place the port is written down. molecule reads this file to build
+    # its inventory, so the number cannot drift between the VM and the play that
+    # connects to it
+    - name: Tell molecule where the machine is
+      ansible.builtin.copy:
+        dest: "{{ lookup('env', 'MOLECULE_INSTANCE_CONFIG') }}"
+        content: |
+          - instance: skibidi-node
+            address: 127.0.0.1
+            user: molecule
+            port: {{ ssh_port }}
+            identity_file: {{ workdir }}/id_ed25519
+        mode: "0600"

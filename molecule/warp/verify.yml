@@ -1,0 +1,101 @@
+---
+# What is asserted here is that traffic leaves through Cloudflare, not that a
+# daemon is running. warp-cli reports a connected tunnel that carries nothing
+# often enough that its own opinion cannot be the test.
+- name: Verify WARP carries traffic and the watchdog behaves
+  hosts: all
+  gather_facts: false
+
+  vars_files:
+    - ../../roles/warp/defaults/main.yml
+
+  tasks:
+    - name: The daemon is running and will survive a reboot
+      ansible.builtin.systemd_service:
+        name: warp-svc
+      register: verify_warp_unit
+      failed_when: >-
+        verify_warp_unit.status.ActiveState != 'active'
+        or verify_warp_unit.status.UnitFileState != 'enabled'
+
+    - name: The proxy answers where the routing rules will look for it
+      ansible.builtin.wait_for:
+        host: "{{ warp_proxy_host }}"
+        port: "{{ warp_proxy_port }}"
+        timeout: 30
+
+    # The endpoint says warp=on only when the request really left through
+    # Cloudflare's network, so this is the difference between a tunnel that
+    # exists and a tunnel that works
+    - name: Traffic through the proxy leaves as WARP
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --socks5-hostname
+          - "{{ warp_proxy_host }}:{{ warp_proxy_port }}"
+          - --max-time
+          - "20"
+          - "{{ warp_probe_url }}"
+      register: verify_trace
+      changed_when: false
+
+    - name: The trace says the egress is WARP
+      ansible.builtin.assert:
+        that: "'warp=on' in verify_trace.stdout"
+        fail_msg: >-
+          the proxy answered but the egress is not WARP:
+          {{ verify_trace.stdout_lines | select('search', 'warp=') | list }}
+
+    - name: The watchdog agrees, without being asked to change anything
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/warp-watchdog]
+      environment:
+        WARP_WD_DRY_RUN: "1"
+      register: verify_verdict
+      changed_when: false
+
+    - name: Its verdict is healthy
+      ansible.builtin.assert:
+        that: "'verdict=healthy' in verify_verdict.stdout"
+        fail_msg: "{{ verify_verdict.stdout | trim }}"
+
+    # The throttle is the part that turns a watchdog from a repair into a loop
+    # when it is missing, so it is exercised rather than assumed
+    - name: Record a restart as though one had just happened
+      ansible.builtin.shell:
+        cmd: |
+          mkdir -p {{ warp_state_dir }}
+          date +%s > {{ warp_state_dir }}/last-restart
+      changed_when: true
+
+    - name: Break the tunnel so the watchdog wants to act
+      ansible.builtin.command:
+        argv: [warp-cli, --accept-tos, disconnect]
+      changed_when: true
+
+    - name: Run the watchdog for real while the throttle is fresh
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/warp-watchdog]
+      register: verify_throttled
+      changed_when: false
+      failed_when: false
+
+    - name: Read what it decided
+      ansible.builtin.command:
+        argv: [journalctl, -t, warp-watchdog, -n, "5", --no-pager]
+      register: verify_watchdog_log
+      changed_when: false
+
+    - name: It refused to restart, and said why
+      ansible.builtin.assert:
+        that: "'throttled' in verify_watchdog_log.stdout"
+        fail_msg: >-
+          the watchdog restarted a service it had just restarted; nothing stops
+          it looping. Log said: {{ verify_watchdog_log.stdout | trim }}
+
+    - name: Put the tunnel back
+      ansible.builtin.command:
+        argv: [warp-cli, --accept-tos, connect]
+      changed_when: true

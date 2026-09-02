@@ -299,6 +299,38 @@ else
 fi
 {% endif %}
 
+# --- WARP -------------------------------------------------------------------
+#
+# Only where the node declares it. A watchdog is a repair that hides the thing
+# it repairs: a tunnel restarted six times a day looks healthy at every single
+# moment, and only the count of restarts says otherwise. So the question is not
+# whether WARP is up now, but how often it had to be revived to stay that way.
+
+{% if 'warp' in group_names %}
+if systemctl is-active --quiet warp-svc; then
+    ok "warp-svc is running"
+else
+    fail "warp-svc is not running"
+fi
+
+verdict=$(WARP_WD_DRY_RUN=1 /usr/local/sbin/warp-watchdog 2>/dev/null)
+case "$verdict" in
+    *verdict=healthy*) ok "WARP carries traffic ($verdict)" ;;
+    *) fail "WARP is up but not carrying traffic: $verdict" ;;
+esac
+
+restart_log={{ warp_state_dir | default('/var/lib/warp-watchdog') }}/restarts
+if [ -r "$restart_log" ]; then
+    day_ago=$(( $(date +%s) - 86400 ))
+    recent=$(awk -v since="$day_ago" '$1 >= since' "$restart_log" 2>/dev/null | wc -l)
+    if [ "$recent" -lt {{ warp_restarts_before_alert | default(3) }} ]; then
+        ok "WARP restarted ${recent} time(s) in the last day"
+    else
+        fail "WARP was restarted ${recent} times in a day; the watchdog is holding up something that keeps failing"
+    fi
+fi
+{% endif %}
+
 # --- certificates -----------------------------------------------------------
 
 {% if certs_domain | default('') %}
