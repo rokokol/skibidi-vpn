@@ -29,7 +29,7 @@ jobs:
           test -c /dev/kvm
 
       - uses: DeterminateSystems/nix-installer-action@v16
-      - uses: nix-community/cache-nix-action@v6
+      - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-molecule-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
           restore-prefixes-first-match: nix-molecule-${{ runner.os }}-
