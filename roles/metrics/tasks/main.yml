@@ -15,12 +15,17 @@
     name: "{{ metrics_export_user }}"
     system: true
 
+# /bin/sh, not nologin: sshd runs a forced command through the account's login
+# shell, so nologin silently kills the export itself — the fleet answered
+# "This account is currently not available" instead of metrics. Login stays
+# impossible anyway: the password is locked and the only key is chained to the
+# guard by restrict,command=
 - name: Create the export account
   ansible.builtin.user:
     name: "{{ metrics_export_user }}"
     group: "{{ metrics_export_user }}"
     system: true
-    shell: /usr/sbin/nologin
+    shell: /bin/sh
     home: "{{ metrics_db_dir }}"
     create_home: false
     password_lock: true
@@ -79,10 +84,16 @@
 
 # Run as the account the master will arrive as, not as root: a read-only open
 # that needs write access anyway is exactly the kind of thing that works in
-# development and fails on the node
+# development and fails on the node. runuser rather than become_user or sudo:
+# an unprivileged become needs the acl package just to hand over Ansible's
+# temp files, sudo is absent from minimal images, and util-linux is everywhere
 - name: Prove the store answers the export account with what was just written
   ansible.builtin.command:
     argv:
+      - runuser
+      - -u
+      - "{{ metrics_export_user }}"
+      - --
       - /usr/local/sbin/skibidi-metrics
       - export
       - --since
@@ -90,7 +101,6 @@
       - --until
       - "9999999999999999"
   become: true
-  become_user: "{{ metrics_export_user }}"
   register: metrics_export
   changed_when: false
   failed_when: metrics_export.rc != 0 or (metrics_export.stdout | from_json).samples | length == 0
@@ -100,9 +110,8 @@
 # this account ever gains the ability to write the store, the deploy stops
 - name: Prove the export account cannot write the store
   ansible.builtin.command:
-    argv: [/usr/local/sbin/skibidi-metrics, collect]
+    argv: [runuser, -u, "{{ metrics_export_user }}", --, /usr/local/sbin/skibidi-metrics, collect]
   become: true
-  become_user: "{{ metrics_export_user }}"
   register: metrics_write_probe
   changed_when: false
   failed_when: metrics_write_probe.rc == 0
@@ -144,20 +153,6 @@
     key: "{{ (hostvars[groups['master'] | first].metrics_master_pubkey.content | b64decode).strip() }}"
     key_options: from="{{ metrics_tunnel_ranges | join(',') }}",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard"
     comment: skibidi-report
-  when:
-    - not ansible_check_mode
-    - groups['master'] | default([]) | length > 0
-    - "'master' not in group_names"
-    - hostvars[groups['master'] | first].metrics_master_pubkey is defined
-
-# The fleet's first weeks ran this pull as root, and the guard was the only
-# thing between the key and a root shell. The key has moved to the export
-# account; a copy left on root would silently undo the whole narrowing
-- name: Take the pull key away from root
-  ansible.posix.authorized_key:
-    user: root
-    key: "{{ (hostvars[groups['master'] | first].metrics_master_pubkey.content | b64decode).strip() }}"
-    state: absent
   when:
     - not ansible_check_mode
     - groups['master'] | default([]) | length > 0

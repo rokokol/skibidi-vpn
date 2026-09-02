@@ -4,9 +4,9 @@ Two promises live in report.toml.j2 and nowhere else. The master never pulls
 from itself: a self-pull would work — the guard would permit it, the store
 would answer — and from that day on nobody could tell the local read from the
 remote path it silently duplicates. And the pull's address is the registry's
-own `metrics_host` declaration, with the panel's listen address as a bridge
-only where none is declared: the two are different decisions, and the template
-is the one place they could quietly fuse back into one field.
+own `metrics_host` declaration, nothing else: a node that has not declared one
+must fail the render, because the template is the one place the pull's address
+could quietly fuse back into the panel's listen field.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 
 from jinja2 import Environment, StrictUndefined
+from jinja2.exceptions import UndefinedError
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "roles" / "reporter" / "templates" / "report.toml.j2"
@@ -44,7 +45,7 @@ def render(hostvars: dict, inventory_hostname: str = "master") -> dict:
 HOSTVARS = {
     "master": {"xui_listen_ip": "100.100.0.1"},
     "alpha": {"xui_listen_ip": "100.100.0.2", "metrics_host": "100.100.0.22"},
-    "beta": {"xui_listen_ip": "100.100.0.3"},
+    "beta": {"xui_listen_ip": "100.100.0.3", "metrics_host": "100.100.0.33"},
 }
 
 
@@ -55,15 +56,18 @@ class TestReportConfig(unittest.TestCase):
         self.assertNotIn("master", names)
         self.assertEqual(names, ["alpha", "beta"])
 
-    def test_a_declared_metrics_host_wins(self):
+    def test_the_address_is_the_registry_declaration(self):
         config = render(HOSTVARS)
         hosts = {node["name"]: node["host"] for node in config["nodes"]}
         self.assertEqual(hosts["alpha"], "100.100.0.22")
+        self.assertEqual(hosts["beta"], "100.100.0.33")
 
-    def test_the_panel_address_is_only_the_fallback(self):
-        config = render(HOSTVARS)
-        hosts = {node["name"]: node["host"] for node in config["nodes"]}
-        self.assertEqual(hosts["beta"], "100.100.0.3")
+    def test_a_node_without_a_declaration_fails_the_render(self):
+        # The alternative — quietly borrowing the panel's listen address — is
+        # exactly the coincidence this field exists to end
+        undeclared = dict(HOSTVARS, beta={"xui_listen_ip": "100.100.0.3"})
+        with self.assertRaises(UndefinedError):
+            render(undeclared)
 
     def test_the_pull_arrives_as_the_export_account(self):
         config = render(HOSTVARS)

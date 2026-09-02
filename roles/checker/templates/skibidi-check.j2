@@ -344,14 +344,22 @@ if [ -e "$pull_key" ]; then
 fi
 {% endif %}
 
-# The export account holds the master's key on every node. It exists to be
-# powerless; a future edit that "fixes" it by granting a shell must fail here
-# rather than quietly turn a metrics key into a login
-if export_entry=$(getent passwd {{ metrics_export_user }}); then
-    case "$export_entry" in
-        */nologin|*/false) ok "{{ metrics_export_user }} cannot log in" ;;
-        *) fail "{{ metrics_export_user }} has a shell: ${export_entry##*:}" ;;
-    esac
+# The export account's whole security is the leash on its key: from= pins the
+# tunnel, restrict strips every ssh feature, command= forces the guard. The
+# shell cannot be the fence — sshd runs the forced command through it, so it
+# has to be real — which makes a key line missing any part of the leash, or an
+# extra key somebody added "for a minute", the drift to catch
+if export_home=$(getent passwd {{ metrics_export_user }} | cut -d: -f6); then
+    export_keys="$export_home/.ssh/authorized_keys"
+    if [ -r "$export_keys" ]; then
+        loose=$(grep -vE '^[[:space:]]*$' "$export_keys" \
+            | grep -vcE '^from="[^"]+",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard" ' || true)
+        if [ "$loose" -eq 0 ]; then
+            ok "every key on {{ metrics_export_user }} wears the full leash"
+        else
+            fail "$loose key(s) on {{ metrics_export_user }} lack from=/restrict/the guard command"
+        fi
+    fi
 fi
 
 # --- WARP -------------------------------------------------------------------

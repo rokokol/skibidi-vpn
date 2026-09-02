@@ -21,10 +21,10 @@ ssh_user = "{{ metrics_export_user }}"
 
 {% for host in groups['nodes'] | default([]) | sort if host != inventory_hostname %}
 # metrics_host is the registry's own word for where the pull goes — a tailnet
-# address, which the checker holds it to. It defaults to the panel's listen
-# address only as a bridge for registries that have not declared it yet; the
-# two are different decisions and must be separable
+# address, which the checker holds it to. Deliberately not defaulted from the
+# panel's listen address: the two are different decisions, and a node that has
+# not declared one fails the deploy rather than silently borrowing the panel's
 [[nodes]]
 name = "{{ host }}"
-host = "{{ hostvars[host].metrics_host | default(hostvars[host].xui_listen_ip) }}"
+host = "{{ hostvars[host].metrics_host }}"
 {% endfor %}
