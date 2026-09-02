@@ -4,6 +4,8 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-03
+
 ### Fixed
 
 - The `3x-ipl` and `recidive` jails were loaded and banning nobody: with `backend = systemd` inherited from `[DEFAULT]`, fail2ban drops a jail's `logpath` without a word and watches the journal instead, where neither the panel nor fail2ban itself ever writes. Both jails now say `backend = auto` — the line the panel's own jail file carries — and the role, the checker and the VM test ask fail2ban which file each jail actually opened. The fallback filter matches the panel's current log line
