@@ -1,4 +1,4 @@
-# skibidi-vpn
+# skibidi-vpn ೖ(⑅σ̑ᴗσ̑)ೖ
 
 [![build](https://github.com/rokokol/skibidi-vpn/actions/workflows/build.yml/badge.svg)](https://github.com/rokokol/skibidi-vpn/actions/workflows/build.yml)
 [![molecule](https://github.com/rokokol/skibidi-vpn/actions/workflows/molecule.yml/badge.svg)](https://github.com/rokokol/skibidi-vpn/actions/workflows/molecule.yml)
@@ -51,6 +51,8 @@ nix flake check
 ```
 
 `molecule test` builds a real Ubuntu VM under KVM and runs the roles against it. A container is not enough here: systemd, the firewall and the tunnel are three of the things worth testing, and none of them behave in one
+
+The molecule workflow is dispatch-only, so its badge shows no status until a run is started by hand: hosted runners provide /dev/kvm inconsistently, and a scheduled red would indict the runner pool rather than the roles
 
 ## Roles
 
