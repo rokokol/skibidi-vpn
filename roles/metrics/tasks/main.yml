@@ -7,6 +7,24 @@
     group: root
     mode: "0755"
 
+# Collection needs root; reading the finished store does not. The export runs
+# as this account so that a bypassed guard is an account that can read one
+# file, not a root shell
+- name: Create the export group
+  ansible.builtin.group:
+    name: "{{ metrics_export_user }}"
+    system: true
+
+- name: Create the export account
+  ansible.builtin.user:
+    name: "{{ metrics_export_user }}"
+    group: "{{ metrics_export_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ metrics_db_dir }}"
+    create_home: false
+    password_lock: true
+
 - name: Install the units
   ansible.builtin.template:
     src: "{{ item }}.j2"
@@ -40,7 +58,29 @@
   changed_when: false
   when: not ansible_check_mode
 
-- name: Prove the store answers with what was just written
+# Group read is the entire privilege the export account holds. setgid keeps
+# whatever sqlite creates beside the store inside the group, so a later journal
+# file cannot end up unreadable to the export
+- name: Let the export group read what root collects
+  ansible.builtin.file:
+    path: "{{ metrics_db_dir }}"
+    state: directory
+    owner: root
+    group: "{{ metrics_export_user }}"
+    mode: "2750"
+
+- name: Keep the store itself root-written and group-read
+  ansible.builtin.file:
+    path: "{{ metrics_db_dir }}/metrics.db"
+    owner: root
+    group: "{{ metrics_export_user }}"
+    mode: "0640"
+  when: not ansible_check_mode
+
+# Run as the account the master will arrive as, not as root: a read-only open
+# that needs write access anyway is exactly the kind of thing that works in
+# development and fails on the node
+- name: Prove the store answers the export account with what was just written
   ansible.builtin.command:
     argv:
       - /usr/local/sbin/skibidi-metrics
@@ -49,9 +89,23 @@
       - "0"
       - --until
       - "9999999999999999"
+  become: true
+  become_user: "{{ metrics_export_user }}"
   register: metrics_export
   changed_when: false
   failed_when: metrics_export.rc != 0 or (metrics_export.stdout | from_json).samples | length == 0
+  when: not ansible_check_mode
+
+# The inverse proof, because a check that cannot go red is not evidence: if
+# this account ever gains the ability to write the store, the deploy stops
+- name: Prove the export account cannot write the store
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/skibidi-metrics, collect]
+  become: true
+  become_user: "{{ metrics_export_user }}"
+  register: metrics_write_probe
+  changed_when: false
+  failed_when: metrics_write_probe.rc == 0
   when: not ansible_check_mode
 
 # The master reads the fleet's stores at report time over a key that this guard
@@ -64,20 +118,46 @@
     creates: /root/.ssh/skibidi-report
   when: "'master' in group_names"
 
+# An unattended key cannot have a passphrase, so its file mode is the whole
+# protection; asserted rather than assumed, because ssh-keygen's 0600 survives
+# only until someone copies the file around
+- name: Keep the private half readable by root alone
+  ansible.builtin.file:
+    path: /root/.ssh/skibidi-report
+    owner: root
+    group: root
+    mode: "0600"
+  when: "'master' in group_names and not ansible_check_mode"
+
 - name: Read the public half back
   ansible.builtin.slurp:
     src: /root/.ssh/skibidi-report.pub
   register: metrics_master_pubkey
   when: "'master' in group_names and not ansible_check_mode"
 
-# restrict + a forced command make the key useless for anything but the export:
-# a stolen private half asks for metrics or gets refused, it never gets a shell
+# restrict + a forced command make the key useless for anything but the export,
+# from= makes it useless off the tunnel, and the account it opens cannot log
+# in, cannot write the store and could not escalate even without the guard
 - name: Let the master pull this node's metrics and nothing else
+  ansible.posix.authorized_key:
+    user: "{{ metrics_export_user }}"
+    key: "{{ (hostvars[groups['master'] | first].metrics_master_pubkey.content | b64decode).strip() }}"
+    key_options: from="{{ metrics_tunnel_ranges | join(',') }}",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard"
+    comment: skibidi-report
+  when:
+    - not ansible_check_mode
+    - groups['master'] | default([]) | length > 0
+    - "'master' not in group_names"
+    - hostvars[groups['master'] | first].metrics_master_pubkey is defined
+
+# The fleet's first weeks ran this pull as root, and the guard was the only
+# thing between the key and a root shell. The key has moved to the export
+# account; a copy left on root would silently undo the whole narrowing
+- name: Take the pull key away from root
   ansible.posix.authorized_key:
     user: root
     key: "{{ (hostvars[groups['master'] | first].metrics_master_pubkey.content | b64decode).strip() }}"
-    key_options: restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard"
-    comment: skibidi-report
+    state: absent
   when:
     - not ansible_check_mode
     - groups['master'] | default([]) | length > 0

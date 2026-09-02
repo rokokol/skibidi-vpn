@@ -82,8 +82,9 @@
             ansible-lint
             yamllint
             # matplotlib because the report tests render real charts; the cid
-            # round trip proves nothing if no chart was ever attached
-            (python3.withPackages (ps: with ps; [ matplotlib ]))
+            # round trip proves nothing if no chart was ever attached. jinja2
+            # because the config template's promises are themselves under test
+            (python3.withPackages (ps: with ps; [ matplotlib jinja2 ]))
           ];
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
           SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";

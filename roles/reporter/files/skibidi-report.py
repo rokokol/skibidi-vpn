@@ -150,6 +150,10 @@ def load_config(path: str | None = None) -> dict:
     paths.setdefault("metrics", "/usr/local/sbin/skibidi-metrics")
     paths.setdefault("sendmail", "/usr/sbin/sendmail")
     paths.setdefault("ssh_key", "/root/.ssh/skibidi-report")
+    # The unprivileged export account on the nodes, never root: the key's guard
+    # is tested, but defence in depth means a bypassed guard lands somewhere
+    # that can only read one file
+    paths.setdefault("ssh_user", "skibidi-metrics")
     config["panel"].setdefault("xui_cli", "/usr/local/x-ui/x-ui")
     return config
 
@@ -486,7 +490,7 @@ def pull_node(config: dict, node: dict, start_us: int, end_us: int) -> dict:
         "ssh", "-i", config["paths"]["ssh_key"],
         "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
         "-o", "StrictHostKeyChecking=accept-new",
-        f"root@{node['host']}",
+        f"{config['paths']['ssh_user']}@{node['host']}",
         f"skibidi-metrics export --since {start_us} --until {end_us}",
     ]
     result = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)

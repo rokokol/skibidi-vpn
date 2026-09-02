@@ -299,6 +299,61 @@ else
 fi
 {% endif %}
 
+# --- the metrics pull -------------------------------------------------------
+#
+# The weekly pull must ride the tunnel by declaration, not by coincidence. The
+# from= restriction on the nodes pins where the pull may come from; this end
+# pins where it may go, because the moment a configured address is public, the
+# fleet's metrics cross the open internet.
+
+{% if 'master' in group_names %}
+if [ -r /etc/skibidi/report.toml ]; then
+    strays=$(python3 - <<'PYEOF'
+import ipaddress
+import tomllib
+
+ranges = [ipaddress.ip_network(r) for r in "{{ metrics_tunnel_ranges | join(' ') }}".split()]
+with open("/etc/skibidi/report.toml", "rb") as handle:
+    nodes = tomllib.load(handle).get("nodes", [])
+for node in nodes:
+    try:
+        inside = any(ipaddress.ip_address(node["host"]) in r for r in ranges)
+    except ValueError:  # a hostname resolves wherever DNS says today
+        inside = False
+    if not inside:
+        print(node["name"])
+PYEOF
+)
+    if [ -z "$strays" ]; then
+        ok "the metrics pull stays on the tunnel"
+    else
+        fail "the metrics pull would leave the tunnel for: $(printf '%s' "$strays" | tr '\n' ' ')"
+    fi
+fi
+
+# No passphrase is possible on an unattended key, so its file mode is the whole
+# protection and drifts silently when the file gets copied around
+pull_key=/root/.ssh/skibidi-report
+if [ -e "$pull_key" ]; then
+    key_perms=$(stat -c '%a:%U' "$pull_key")
+    if [ "$key_perms" = "600:root" ]; then
+        ok "the pull key is readable by root alone"
+    else
+        fail "the pull key is $key_perms, expected 600:root, and it has no passphrase behind it"
+    fi
+fi
+{% endif %}
+
+# The export account holds the master's key on every node. It exists to be
+# powerless; a future edit that "fixes" it by granting a shell must fail here
+# rather than quietly turn a metrics key into a login
+if export_entry=$(getent passwd {{ metrics_export_user }}); then
+    case "$export_entry" in
+        */nologin|*/false) ok "{{ metrics_export_user }} cannot log in" ;;
+        *) fail "{{ metrics_export_user }} has a shell: ${export_entry##*:}" ;;
+    esac
+fi
+
 # --- WARP -------------------------------------------------------------------
 #
 # Only where the node declares it. A watchdog is a repair that hides the thing

@@ -8,6 +8,22 @@ metrics_retention_days: 90
 
 metrics_db_dir: /var/lib/skibidi-metrics
 
+# The account the master's key lands on. Collection stays root — some probes
+# genuinely need it — but reading the finished store is a file permission, not
+# a privilege, so the export gets an account that cannot log in
+metrics_export_user: skibidi-metrics
+
+# The tunnel, stated as ranges. Used twice for the same reason: sshd matches
+# the pull's source against them (a stolen key is inert outside the tunnel),
+# and the checker requires the pull's destination to be inside them (a public
+# metrics path would cross the internet unencrypted below SSH's view of it).
+# A fleet on a different tunnel has different ranges — override, never edit.
+# Caution: from= sees the address sshd sees; anything that proxies or NATs the
+# connection makes the match fail with a bare authentication error
+metrics_tunnel_ranges:
+  - 100.64.0.0/10
+  - fd7a:115c:a1e0::/48
+
 # Timers whose last-fired time the report shows; a quiet one is a mechanism
 # that stopped without saying so, and the checker alerts on it long before
 # Monday — the report only makes the pattern visible over the week

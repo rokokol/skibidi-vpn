@@ -47,10 +47,23 @@ CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 
 def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # 0640/0750 rather than 0600/0700: the export runs as an unprivileged
+    # account that reaches the store through group read, set up by the role.
+    # Root stays the only writer
+    DB_PATH.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH, timeout=30)
     connection.executescript(SCHEMA)
-    os.chmod(DB_PATH, 0o600)
+    os.chmod(DB_PATH, 0o640)
+    return connection
+
+
+def connect_readonly() -> sqlite3.Connection:
+    # mode=ro never creates the file and refuses every write below SQL level,
+    # so a bug in the export path cannot damage what the collector wrote — and
+    # unlike a plain open it needs no journal files created beside the store,
+    # which the export account could not create anyway
+    connection = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
+    connection.execute("PRAGMA query_only = ON")
     return connection
 
 
@@ -221,7 +234,7 @@ def collect() -> int:
 
 
 def export(since_us: int, until_us: int) -> int:
-    with connect() as connection:
+    with connect_readonly() as connection:
         samples = connection.execute(
             "SELECT ts_us, metric, detail, value FROM samples "
             "WHERE ts_us >= ? AND ts_us < ? ORDER BY ts_us",

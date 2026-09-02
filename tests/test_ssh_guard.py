@@ -11,8 +11,14 @@ it at all.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import json
+import os
+import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -97,6 +103,57 @@ class TestSshGuard(unittest.TestCase):
         self.assertNotEqual(
             self.run_guard(f"skibidi-metrics export --since {long_number} --until 2"), 0
         )
+
+
+class TestReadOnlyExport(unittest.TestCase):
+    """What the export may do once the guard lets it run.
+
+    The guard decides whether export runs at all; these hold what it can do
+    when it does. The export serves an unprivileged account, and a store
+    opened writable "just in case" is the difference between a leaked key
+    reading metrics and a leaked key corrupting them.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "metrics.db"
+        os.environ["SKIBIDI_METRICS_DB"] = str(self.db)
+        self.addCleanup(os.environ.pop, "SKIBIDI_METRICS_DB", None)
+        self.module = load()
+
+    def write_one_sample(self):
+        with self.module.connect() as connection:
+            connection.execute(
+                "INSERT INTO samples (ts_us, metric, detail, value) VALUES (1, 'load1', '', 0.5)"
+            )
+        connection.close()
+
+    def test_export_does_not_create_a_missing_store(self):
+        # A read-write open would conjure an empty store here, turning "the
+        # collector never ran" into a healthy-looking week of zeros
+        with self.assertRaises(sqlite3.OperationalError):
+            self.module.export(0, 10**16)
+        self.assertFalse(self.db.exists(), "the export created the store it failed to read")
+
+    def test_the_readonly_connection_refuses_writes(self):
+        self.write_one_sample()
+        readonly = self.module.connect_readonly()
+        self.addCleanup(readonly.close)
+        with self.assertRaises(sqlite3.OperationalError):
+            readonly.execute(
+                "INSERT INTO samples (ts_us, metric, detail, value) VALUES (2, 'load1', '', 1.0)"
+            )
+
+    def test_export_still_reads_what_the_collector_wrote(self):
+        # Read-only must not mean broken: the same call the guard permits has
+        # to keep answering, or the narrowing quietly killed the report
+        self.write_one_sample()
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(self.module.export(0, 10**16), 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(len(payload["samples"]), 1)
 
 
 if __name__ == "__main__":
