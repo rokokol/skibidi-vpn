@@ -6,25 +6,25 @@ Things in these roles that read as workarounds, with why each is there and what 
 
 `install.sh` does more than download: it installs the panel's dependencies, lays out the binary and the unit for the distribution, generates the first credentials and base path, runs `x-ui migrate` and writes the fail2ban files. Replacing it with tasks would mean carrying a copy of it and chasing every release. So the role fetches it at the commit the release tag points to, checks its sha256 before bash sees it, and runs it from disk. The management script it leaves at `/usr/bin/x-ui` is fetched from `main` by the installer whatever tag it was given, and the panel runs that script as root from its menu, so the role puts the script back at its own pinned digest afterwards
 
-Reported: MHSanaei/3x-ui, install.sh fetching x-ui.sh from `main` regardless of the tag. Retired by: an installer that takes x-ui.sh from the same tag as the tarball
+Reported: [MHSanaei/3x-ui#6391](https://github.com/MHSanaei/3x-ui/pull/6391), x-ui.sh and the units fetched from the installed tag. Retired by: that change landing at the pinned version; then the script the installer leaves is already the pinned one
 
 ## The panel binary is pinned on the way out, not the tarball on the way in
 
 The one thing the installer downloads that cannot be checked beforehand is the release tarball: the installer fetches it inside itself and unpacks it at once, so the role never holds the file, and upstream publishes no digest to hold it to. The role pins what comes out instead, the sha256 of `/usr/local/x-ui/x-ui`, on every run rather than only after an install, so a tampered download and a panel updated from its own menu fail the deploy the same way. The Xray binary beside it is deliberately not pinned: the panel is allowed to switch cores from its own UI, and that is the panel's domain
 
-Reported: MHSanaei/3x-ui, no checksum for release assets in install.sh. Retired by: upstream publishing digests and checking them inside the installer
+Reported: [MHSanaei/3x-ui#6393](https://github.com/MHSanaei/3x-ui/pull/6393), SHA-256 sidecars in releases and verification in install.sh and update.sh. Retired by: that change landing at the pinned version
 
 ## The panel's database is closed by the role, after the panel opened it
 
 The panel creates `/etc/x-ui` at 0755 and its database, write-ahead log and shared memory under the default umask, which makes every client credential and every Reality private key readable by any local account, including the unprivileged one the metrics export runs as. The role sets the directory to 0700 and everything named after the database to 0600 on every run, takes its own backups under `umask 077`, and the checker turns red on anything looser
 
-Reported: MHSanaei/3x-ui, a pull request for 0700/0600 in `internal/database/db.go`. Retired by: that change landing at the pinned version
+Reported: [MHSanaei/3x-ui#6390](https://github.com/MHSanaei/3x-ui/pull/6390), the SQLite store created 0700/0600. Retired by: that change landing at the pinned version; the role's tasks then find nothing to change and can go
 
 ## The file-reading jails say `backend = auto` themselves
 
 fail2ban drops a jail's `logpath` without a word the moment its backend starts with `systemd` (`jailreader.py`, 1.0.2), and Ubuntu 24.04 sets that backend for every jail in `jail.d/defaults-debian.conf`. A jail configured that way loads, reports green and watches the journal, where neither the panel nor fail2ban itself ever writes. `[3x-ipl]` and `[recidive]` therefore carry `backend = auto` explicitly, the line the panel's own jail file has, and the role, the checker and the VM test ask `fail2ban-client get <jail> logpath` for the file each jail actually opened
 
-Reported: fail2ban/fail2ban, a warning when `logpath` is ignored. Retired by: nothing short of fail2ban refusing the combination; the explicit backend costs one line and stays
+Reported: [fail2ban/fail2ban#4232](https://github.com/fail2ban/fail2ban/issues/4232), a warning when `logpath` is dropped under a systemd backend, with a diff; and [MHSanaei/3x-ui#6392](https://github.com/MHSanaei/3x-ui/pull/6392), the panel's backend override written to `jail.d` instead of `sed` on `jail.conf`. Retired by: nothing short of fail2ban refusing the combination; the explicit backend costs one line and stays
 
 ## The weekly report reads the panel's database, not its API
 
@@ -48,7 +48,7 @@ Retired by: nothing; this is how the installer is meant to be driven unattended,
 
 An argument sits in `/proc/<pid>/cmdline` for every process on the node while the join runs, and `no_log` only hides it from Ansible's output. The CLI accepts `--auth-key file:<path>`, so the key is written to a root-only file on tmpfs, used once, and removed
 
-Reported: tailscale/tailscale, the security KB recommending an environment variable and not mentioning `file:`. Retired by: nothing; the file form is the right one whatever the docs say
+Reported: [tailscale/tailscale#21084](https://github.com/tailscale/tailscale/issues/21084), the security KB should recommend `--auth-key=file:`. Retired by: nothing; the file form is the right one whatever the docs say
 
 ## The apt signing keys are carried in the repository
 
