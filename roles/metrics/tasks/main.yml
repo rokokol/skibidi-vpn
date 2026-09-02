@@ -147,6 +147,22 @@
 # restrict + a forced command make the key useless for anything but the export,
 # from= makes it useless off the tunnel, and the account it opens cannot log
 # in, cannot write the store and could not escalate even without the guard
+# A play that left the master out (--limit, say) has no public half to hand
+# over, and skipping silently would deploy a node the letter cannot read.
+# Named rather than skipped: the operator ran the play, and the play must say
+# what it could not do
+- name: Refuse to deploy a node whose master was not in this play
+  ansible.builtin.assert:
+    that: hostvars[groups['master'] | first].metrics_master_pubkey is defined
+    fail_msg: >-
+      the master {{ groups['master'] | first }} was not in this play, so its pull
+      key is unknown here and this node would be deployed unreadable to the
+      letter; run the play with the master included
+  when:
+    - not ansible_check_mode
+    - groups['master'] | default([]) | length > 0
+    - "'master' not in group_names"
+
 - name: Let the master pull this node's metrics and nothing else
   ansible.posix.authorized_key:
     user: "{{ metrics_export_user }}"

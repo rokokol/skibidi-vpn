@@ -12,7 +12,9 @@ ansible_user = "root"
 # Roles are selected by what a node declares itself to be, never by its name
 capabilities = ["master"]
 
-# Panel — consumed by the skill, and by the xui role for the bind check
+# Panel — consumed by the skill only; the inventory keeps it out of hostvars
+# because the base path is what hides the panel from a scan of the tunnel.
+# The xui role reads the three fields below instead
 panel = "https://100.72.0.4:16099/randomBasePath/"
 token = "replace-me"
 verify_tls = false

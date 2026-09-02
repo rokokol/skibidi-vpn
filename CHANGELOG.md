@@ -21,12 +21,16 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - The fail2ban `ignoreip` spelled the tunnel a second time and without its IPv6 range; it now derives from `metrics_tunnel_ranges`
 - The firewall asserted tailscaled's port before tailscale was installed on a fresh node, accepting an empty answer; `tailscale` now runs first and the assertion requires the port
 - The Tailscale auth key travelled on the command line, visible in `/proc` to every process while the join ran; it now passes through a root-only file in `/run` that is removed afterwards
+- The certificate was reinstalled, and the panel restarted by its reload command, on every deploy: acme.sh wraps the recorded reload command in base64 markers the role did not strip, so the comparison never matched. The markers are stripped now
+- A play without its master in it (`--limit`, say) silently deployed nodes the letter could not read, because the master's public key was unknown; the metrics role now refuses and says why
 - The metrics collector named a failing ufw probe `<lambda>` in the journal
 - The inventory refuses a capability named `all`, `nodes` or `ungrouped`, which would have overwritten a group the roles hang on, and drops any host variable shaped like a credential
 
 ### Added
 
 - `vault.example.yml` and a README section on where `tailscale_auth_key` and `certs_cf_token` come from: a vault file passed with `-e`, never a node file
+- `docs/deviations.md`: everything that reads as a workaround and is not one, with the upstream report each rests on and what would retire it; the README roadmap keeps only what is still to come
+- The inventory keeps the panel URL out of host variables too: its base path is what hides the panel from a scan of the tunnel, and no role reads it
 - README lists every role
 
 ## [1.0.0] - 2026-09-02

@@ -94,13 +94,20 @@
 # the reload command would never reach the renewal that has to run it. The
 # recorded command is read instead, and the install is redone only when it
 # differs or the certificate is not there at all
+# acme.sh wraps the base64 in __ACME_BASE64__START_ ... __ACME_BASE64__END_
+# markers. Decoding the whole value fails, the failure was swallowed into an
+# empty string, and an empty string never equals the declared command - so the
+# install ran on every deploy, and its reload command restarted the panel
+# every time. The markers are stripped before decoding
 - name: Read the reload command acme.sh has recorded
   ansible.builtin.shell:
     cmd: >-
       set -o pipefail &&
       grep -h '^Le_ReloadCmd='
       '{{ certs_home }}/{{ certs_primary_domain }}_ecc/{{ certs_primary_domain }}.conf'
-      2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"" | base64 -d 2>/dev/null || true
+      2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\""
+      | sed -e 's/^__ACME_BASE64__START_//' -e 's/__ACME_BASE64__END_$//'
+      | base64 -d 2>/dev/null || true
     executable: /bin/bash
   register: certs_recorded_reload
   changed_when: false

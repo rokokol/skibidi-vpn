@@ -32,8 +32,10 @@ ANSIBLE_KEYS = {
 
 # Fields the other consumer needs and Ansible does not. Kept out of hostvars
 # because `ansible-inventory --list` prints them, and that output gets pasted
-# into issues and chat logs
-SECRET_KEYS = {"token", "token_file"}
+# into issues and chat logs. The panel URL is in the set for its base path,
+# which is the one thing hiding the panel from a scan of the tunnel; the
+# roles read xui_listen_ip, xui_panel_port and xui_base_path instead
+SECRET_KEYS = {"token", "token_file", "panel"}
 
 # Anything shaped like a credential is dropped too, whatever its name. Secrets
 # for the roles travel in a vault file passed with -e, never in a node file,
