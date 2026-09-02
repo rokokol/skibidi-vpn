@@ -4,6 +4,8 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-02
+
 ### Added
 
 - Node registry as a folder of TOML files, one per node, shared with the `3x-ui-admin-skill` so there is a single registry with two consumers. Groups come from each node's declared capabilities, so no role selects a node by name
