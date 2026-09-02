@@ -11,6 +11,12 @@ certs_email: ""
 certs_cf_token: ""               # from the vault, scoped Zone:DNS:Edit on one zone
 certs_home: /root/.acme.sh
 
+# acme.sh is installed from a release archive checked against a digest, never
+# from get.acme.sh: that script clones whatever master is today and runs it
+# as root. Both values move together
+certs_acme_version: "3.1.4"
+certs_acme_sha256: e5f8e187bbf5251e0cd8891f2622daab9850366bd17bea9f92c2fe2ee091fd32
+
 # Where the certificate is installed. This has to be the path the panel already
 # has in its database: the panel stores paths, not files, and issuing into a
 # different directory leaves it serving nothing while the certificate sits

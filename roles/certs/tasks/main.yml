@@ -9,29 +9,54 @@
     # download
     cache_valid_time: 3600
 
-- name: Install acme.sh
-  ansible.builtin.shell:
-    cmd: >-
-      set -o pipefail &&
-      curl -fsSL https://get.acme.sh | sh -s email={{ certs_email }}
-    executable: /bin/bash
-    creates: "{{ certs_home }}/acme.sh"
+- name: Look for an acme.sh already installed
+  ansible.builtin.stat:
+    path: "{{ certs_home }}/acme.sh"
+  register: certs_acme_installed
 
-# Scoped to one zone and, where the provider allows it, to this node's address.
-# A token that can edit every zone is the same blast radius as the registrar
-# Skipped when no token is supplied, rather than writing an empty one. The file
-# may already hold a working token placed by hand or by an earlier run, and
-# overwriting it with nothing breaks renewal silently - the certificate keeps
-# working until the day it expires
-- name: Store the DNS API token
-  ansible.builtin.copy:
-    dest: /etc/acme-cf-token
-    content: "{{ certs_cf_token }}\n"
+- name: Fetch the acme.sh release archive
+  ansible.builtin.get_url:
+    url: https://github.com/acmesh-official/acme.sh/archive/refs/tags/{{ certs_acme_version }}.tar.gz
+    dest: /root/acme.sh-{{ certs_acme_version }}.tar.gz
+    checksum: sha256:{{ certs_acme_sha256 }}
     owner: root
     group: root
     mode: "0600"
-  when: certs_cf_token | length > 0
-  no_log: true
+  when: not certs_acme_installed.stat.exists
+
+- name: Unpack it
+  ansible.builtin.unarchive:
+    src: /root/acme.sh-{{ certs_acme_version }}.tar.gz
+    dest: /root
+    remote_src: true
+    creates: /root/acme.sh-{{ certs_acme_version }}/acme.sh
+  when: not certs_acme_installed.stat.exists
+
+# --install copies the script and its dns providers into certs_home and
+# registers the renewal cron, the same as get.acme.sh would have done
+- name: Install acme.sh
+  ansible.builtin.command:
+    argv: [./acme.sh, --install, -m, "{{ certs_email }}"]
+    chdir: /root/acme.sh-{{ certs_acme_version }}
+    creates: "{{ certs_home }}/acme.sh"
+  when: not certs_acme_installed.stat.exists
+
+- name: Remove the archive and the unpacked tree
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /root/acme.sh-{{ certs_acme_version }}.tar.gz
+    - /root/acme.sh-{{ certs_acme_version }}
+
+# acme.sh keeps the token itself, in its account.conf, from the environment
+# the issue step passes it in. An earlier generation of this role also wrote
+# it to this path, which nothing ever read: a second copy of a zone-edit token
+# on every node, for no consumer
+- name: Remove the token copy nothing reads
+  ansible.builtin.file:
+    path: /etc/acme-cf-token
+    state: absent
 
 - name: Look for a certificate already installed
   ansible.builtin.stat:

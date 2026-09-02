@@ -2,8 +2,10 @@
 #
 # The panel logs a line naming the address it disconnected for exceeding a
 # client's address limit. Matching its own message means this jail never has to
-# guess what the limit is.
+# guess what the limit is. The pattern is the one x-ui.sh writes at the pinned
+# panel version; the checker runs it against the live log, so a format change
+# in a later release turns red there rather than banning nobody
 [Definition]
 datepattern = ^%%Y/%%m/%%d %%H:%%M:%%S
-failregex   = \[LIMIT_IP\]\s*Email\s*=\s*<F-USER>.+</F-USER>\s*\|\|\s*SRC\s*=\s*<ADDR>
+failregex   = \[LIMIT_IP\]\s*Email\s*=\s*<F-USER>.+</F-USER>\s*\|\|\s*Disconnecting OLD IP\s*=\s*<ADDR>\s*\|\|\s*Timestamp\s*=\s*\d+
 ignoreregex =

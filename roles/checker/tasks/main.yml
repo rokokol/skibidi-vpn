@@ -1,13 +1,18 @@
 ---
 - name: Install what the checks and the mail path need
   ansible.builtin.apt:
-    name: [curl, sqlite3, msmtp, msmtp-mta, iproute2, openssl]
+    name: [curl, sqlite3, msmtp, msmtp-mta, iproute2, openssl, ca-certificates]
     state: present
     update_cache: true
     cache_valid_time: 3600
 
 # The intake authorises by source address and holds the list of who may use it,
-# so this node carries no credential - and therefore nothing here is secret
+# so this node carries no credential - and therefore nothing here is secret.
+# It sits on a public address, so the session is encrypted and the server is
+# verified against the system trust store: the weekly letter names every
+# client and every node, and a source-address allowlist does not stop a
+# reader on the path. STARTTLS rather than implicit TLS is what the intake
+# offers (Postfix "may")
 - name: Point the mailer at the intake
   ansible.builtin.copy:
     dest: /etc/msmtprc
@@ -21,7 +26,15 @@
       host {{ checker_smtp | regex_replace(':.*$', '') }}
       port {{ checker_smtp | regex_replace('^.*:', '') }}
       auth off
+      {% if checker_smtp_tls %}
+      tls on
+      tls_starttls on
+      tls_trust_file /etc/ssl/certs/ca-certificates.crt
+      {% else %}
+      # No TLS: the intake is on the tunnel, encrypted and authenticated
+      # below SMTP, and the checker refuses this line for any other address
       tls off
+      {% endif %}
       from skibidi-vpn@{{ inventory_hostname }}
       account default : intake
     owner: root
@@ -56,6 +69,28 @@
     timeout: 15
   when: checker_smtp | length > 0
   check_mode: false
+
+# An open port is not an accepted letter: the intake can answer the handshake
+# and refuse this node at RCPT, or refuse the certificate this side now
+# insists on, and either shows up only in msmtp's log on the night an alert
+# was needed. msmtp exits non-zero when the server refuses, so one letter at
+# deploy time is the whole proof, and it reaches the same address a real
+# alert would
+- name: Prove the intake accepts a letter from this node
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      printf 'To: %s\nFrom: skibidi-vpn@%s\nSubject: [%s] deploy probe\nAuto-Submitted: auto-generated\n\nThe intake accepted a letter from %s at %s. Nothing is wrong.\n' \
+        "{{ checker_alert_to }}" "{{ inventory_hostname }}" "{{ inventory_hostname }}" "{{ inventory_hostname }}" "$(date -Is)" \
+        | sendmail -t
+    executable: /bin/bash
+  when:
+    - checker_smtp | length > 0
+    - checker_alert_to | length > 0
+    - not ansible_check_mode
+  changed_when: false
+  register: checker_probe_letter
+  failed_when: checker_probe_letter.rc != 0
 
 # The alert's HTML half. Optional twice over: the css only arrives from a
 # deploy run inside the dev shell, and the alert script falls back to plain

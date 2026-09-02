@@ -4,8 +4,10 @@
   become: "{{ ansible_become | default(false) }}"
   roles:
     - common
-    - firewall
+    # Before the firewall: the firewall reads the port the daemon was installed
+    # with, and on a fresh node the daemon has to exist for that to be a check
     - tailscale
+    - firewall
     - xui
     - fail2ban
     - role: certs

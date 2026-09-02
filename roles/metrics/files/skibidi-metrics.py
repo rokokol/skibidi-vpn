@@ -209,8 +209,11 @@ def collect() -> int:
     failed = []
     with connect() as connection:
         rows = []
-        for probe in PROBES + [lambda: probe_ufw_drops(connection, now_us)]:
-            name = getattr(probe, "__name__", "probe_ufw_drops")
+        # A lambda has a __name__ too, "<lambda>", so the journal line names
+        # the probe explicitly rather than trusting the attribute
+        drops = lambda: probe_ufw_drops(connection, now_us)  # noqa: E731
+        for probe in PROBES + [drops]:
+            name = "probe_ufw_drops" if probe is drops else probe.__name__
             try:
                 rows.extend((now_us, m, d, v) for m, d, v in probe())
             except Exception as error:  # noqa: BLE001 — one probe must not cost the run

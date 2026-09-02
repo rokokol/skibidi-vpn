@@ -1,7 +1,12 @@
 ---
-- name: Add the Tailscale apt key
-  ansible.builtin.get_url:
-    url: https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg
+# The key decides which packages apt will trust, so it is carried in the
+# repository rather than fetched: a download can only be checked against a
+# digest that is itself pinned here, and at that point the bytes may as well
+# be. Tailscale signs every Ubuntu release with the same key (noble and jammy
+# serve identical files); a rotation shows up as a diff in this file
+- name: Install the Tailscale apt key
+  ansible.builtin.copy:
+    src: tailscale-archive-keyring.gpg
     dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
     owner: root
     group: root
@@ -58,15 +63,39 @@
 
 # Joining is the one step that needs a secret, so it runs only when the node is
 # not already a member — re-running the play must not require the key
-- name: Join the tailnet
-  ansible.builtin.command: >-
-    tailscale up
-    --authkey {{ tailscale_auth_key }}
-    --hostname {{ tailscale_hostname }}
-    --accept-routes={{ tailscale_accept_routes | lower }}
-    --ssh={{ tailscale_ssh | lower }}
-  when:
-    - tailscale_auth_key | length > 0
-    - (tailscale_status.stdout | default('{}') | from_json).BackendState | default('') != 'Running'
-  changed_when: true
+- name: Report whether the node needs to join
+  ansible.builtin.set_fact:
+    tailscale_join_pending: >-
+      {{ tailscale_auth_key | length > 0
+         and (tailscale_status.stdout | default('{}') | from_json).BackendState | default('') != 'Running' }}
+
+# Through a file, not an argument: an argument sits in /proc/<pid>/cmdline for
+# every process on the node while the join runs, and no_log only hides it
+# from Ansible's own output. /run is memory, so nothing lands on disk
+- name: Hand the key over in a file only root can read
+  ansible.builtin.copy:
+    dest: /run/tailscale-authkey
+    content: "{{ tailscale_auth_key }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: tailscale_join_pending
   no_log: true
+
+- name: Join the tailnet
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - up
+      - --auth-key=file:/run/tailscale-authkey
+      - --hostname={{ tailscale_hostname }}
+      - --accept-routes={{ tailscale_accept_routes | lower }}
+      - --ssh={{ tailscale_ssh | lower }}
+  when: tailscale_join_pending
+  changed_when: true
+
+- name: Forget the key
+  ansible.builtin.file:
+    path: /run/tailscale-authkey
+    state: absent
+  when: tailscale_join_pending

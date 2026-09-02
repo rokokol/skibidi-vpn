@@ -99,7 +99,7 @@
       checks = forAll (pkgs: {
         # Everything that needs no network and no VM, so it can gate a push
         lint = pkgs.runCommand "skibidi-vpn-lint" { buildInputs = [ pkgs.shellcheck ]; } ''
-          shellcheck ${self}/tests/no-secrets.sh
+          shellcheck ${self}/tests/no-secrets.sh ${self}/tests/falsify-secrets.sh
           touch $out
         '';
       });

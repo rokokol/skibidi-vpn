@@ -30,7 +30,19 @@ export SKIBIDI_NODES_DIR=/path/to/private/nodes   # this repo
 export XUI_NODES_DIR=/path/to/private/nodes       # the 3x-ui-admin-skill
 ```
 
-One registry, two consumers. A node file must be `chmod 600`; the inventory refuses to read one that anyone else can open, and strips the panel token from host variables so it never reaches `ansible-inventory --list` output
+One registry, two consumers. A node file must be `chmod 600`; the inventory refuses to read one that anyone else can open, and strips the panel token — and anything else shaped like a credential — from host variables so it never reaches `ansible-inventory --list` output
+
+## Secrets
+
+The roles need two secrets and the registry holds neither: a Tailscale auth key, read only on a node that has not joined yet, and a Cloudflare token for the DNS-01 challenge. They travel in a vault file passed to the play:
+
+```sh
+cp vault.example.yml vault.yml          # git-ignored
+ansible-vault encrypt vault.yml
+ansible-playbook site.yml -e @vault.yml --ask-vault-pass
+```
+
+The panel needs no credential from this repository at all: the weekly report reads the panel's database on the master, opened read-only. The panel's API token belongs to the `3x-ui-admin-skill`, issued in the panel's UI under its own name
 
 ## Use
 
@@ -47,12 +59,18 @@ ansible-playbook site.yml
 ansible-playbook site.yml --syntax-check
 ansible-lint                      # passes at the production profile
 ./tests/no-secrets.sh             # nothing secret reached a tracked file
+./tests/falsify-secrets.sh        # and the gate would notice if one did
 nix flake check
 ```
 
 `molecule test` builds a real Ubuntu VM under KVM and runs the roles against it. A container is not enough here: systemd, the firewall and the tunnel are three of the things worth testing, and none of them behave in one
 
 The molecule workflow is dispatch-only, so its badge shows no status until a run is started by hand: hosted runners provide /dev/kvm inconsistently, and a scheduled red would indict the runner pool rather than the roles
+
+## Roadmap
+
+- The `sub` capability is declared on the master and read by nothing yet. It is reserved for the day subscriptions are served through Clash: the node carrying it will get the subscription port opened to the CDN's ranges alone, with `firewall_tcp_open_from`, and the checker will hold that port to those sources
+- The panel's release tarball is the one download the deploy cannot check beforehand, because upstream publishes no digest; the role pins the binary that comes out of it instead, and an issue asks upstream for the digest
 
 ## Roles
 
@@ -64,3 +82,9 @@ The molecule workflow is dispatch-only, so its badge shows no status until a run
 | `xui` | the pinned panel, bound to the tunnel address, asserted afterwards |
 | `certs` | a wildcard certificate over DNS-01, so only the wildcard reaches Certificate Transparency |
 | `nginx` | port 80, and the optional egress-address echo |
+| `fail2ban` | the sshd, recidive and panel address-limit jails, each proven to read the log it is meant to |
+| `metrics` | a ten-minute sampler of what the panel does not know, and the read-only export the master pulls |
+| `reporter` | the Monday letter, built from the panel's database and the fleet's metric stores; master only |
+| `checker` | the half-hourly self-check, mailed on failure straight past the master |
+| `warp` | Cloudflare WARP as a local proxy, with a watchdog that counts its own restarts |
+| `cleanup` | what the previous generation of this repository installed, removed and proven gone |

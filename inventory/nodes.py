@@ -35,6 +35,19 @@ ANSIBLE_KEYS = {
 # into issues and chat logs
 SECRET_KEYS = {"token", "token_file"}
 
+# Anything shaped like a credential is dropped too, whatever its name. Secrets
+# for the roles travel in a vault file passed with -e, never in a node file,
+# but a key that lands here by mistake must not reach the printed output
+SECRET_SHAPES = ("_key", "_token", "password", "secret")
+
+# Names the inventory itself hands out; a capability spelled like one would
+# overwrite the group every role hangs on
+RESERVED_GROUPS = {"all", "ungrouped", "nodes"}
+
+
+def is_secret(key: str) -> bool:
+    return key in SECRET_KEYS or any(shape in key.lower() for shape in SECRET_SHAPES)
+
 
 class InventoryError(Exception):
     pass
@@ -69,11 +82,13 @@ def build(directory: Path) -> dict:
         inventory["_meta"]["hostvars"][name] = {
             k: v
             for k, v in raw.items()
-            if k not in SECRET_KEYS and (k in ANSIBLE_KEYS or not k.startswith("ansible_"))
+            if not is_secret(k) and (k in ANSIBLE_KEYS or not k.startswith("ansible_"))
         }
 
         for capability in raw.get("capabilities", []):
             group = str(capability)
+            if group in RESERVED_GROUPS:
+                raise InventoryError(f"{path}: capability {group!r} is a name the inventory reserves")
             inventory.setdefault(group, {"hosts": []})["hosts"].append(name)
 
     inventory["nodes"] = {"hosts": nodes}

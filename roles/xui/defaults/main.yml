@@ -3,6 +3,22 @@
 # to work, so this is pinned and moved deliberately, never tracked to latest
 xui_version: "3.7.0"
 
+# The installer script is fetched at a commit, not a branch, and checked
+# against a digest before bash sees it: the tarball it fetches is pinned by
+# the version above, but the script itself comes from `main` otherwise, and a
+# changed script is root on every node at the next deploy. Both move together
+# with xui_version - the commit is the one the release tag points at
+xui_installer_commit: f727d04f6522bb94a8fb52e8352fdcafb51c11e1
+xui_installer_sha256: a7f4fedcea3abe8987508d00f29834b8872e4e4e5059159eb19460d474b37cdc
+# The management script the installer puts at /usr/bin/x-ui - it fetches it
+# from `main` regardless of the tag, so the role puts the pinned one back
+xui_script_sha256: cfabcd4af35a3646c374ea0ccba5178f4c0d3135f699277fc8d8b810158e85c0
+# The panel binary the release tarball carries for amd64. The tarball itself
+# has no published digest, so the role pins what comes out of it instead and
+# refuses a node whose binary is anything else - a tampered download and a
+# panel updated from its own menu both fail the same way
+xui_binary_sha256: 4738190332c5480ec96fd72e10a21157ee4bcf91c240a9b4b061d14f15092298
+
 xui_db: /etc/x-ui/x-ui.db
 
 # The panel answers on the tunnel address only; set per node from its own file

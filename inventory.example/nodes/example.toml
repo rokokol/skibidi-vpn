@@ -25,6 +25,17 @@ certs_domain = "example.org"
 certs_email = "admin@example.org"
 
 # Where breakage and summaries are mailed. No credential is needed: the intake
-# authorises by the node's address, so nothing secret lives on the node
+# authorises by the node's address, so nothing secret lives on the node. The
+# session is STARTTLS with the name verified, so this is the name on the
+# intake's certificate. An intake on the tunnel is written as its tunnel
+# address with checker_smtp_tls = false; the checker refuses tls off anywhere
+# else
 alert_to = "vpn@example.org"
 smtp = "mail.example.org:25025"
+
+# Where the master pulls this node's metrics from: a tunnel address, which the
+# checker holds it to. Not defaulted from the panel's listen address on purpose
+metrics_host = "100.72.0.4"
+
+# Secrets never live in this file. tailscale_auth_key and certs_cf_token come
+# from vault.yml, passed with -e; see vault.example.yml

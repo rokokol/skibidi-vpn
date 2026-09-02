@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The weekly letter. One message from the master, covering the whole fleet.
 
-Everything here reads — the panel's API, the fleet's metric stores over a
-key that can only ask for metrics, and this host's own daily snapshots — and
-writes one multipart message.
+Everything here reads — the panel's own database, opened read-only, the
+fleet's metric stores over a key that can only ask for metrics, and this host's
+own daily snapshots — and writes one multipart message.
 
 Two rules the layout hangs on, both inherited from the mail host's report. A
 section with nothing to say is omitted entirely, in text and HTML alike — but
@@ -12,9 +12,13 @@ the reporting is broken. And there is no permanent status banner: an alert
 block exists only when something is wrong, and it also prefixes the subject,
 so trouble is visible in a notification without opening anything.
 
-The panel token is minted at startup by the panel's own CLI and lives only in
-this process: nothing on disk holds a credential, and reissuing under the
-cli-fallback name invalidates the previous run's token by design.
+No API and no token: the master holds the panel's database, and reading it is
+a file permission rather than a credential. The panel's CLI can only mint a
+token by rotating the one it owns, which would knock out whoever else held it;
+the database asks nothing of anyone. The columns read here — inbounds,
+client_traffics, settings, nodes — are the ones the panel has carried since its
+first releases, and a release that moves one fails the deploy-time rehearsal,
+not a Monday.
 """
 
 from __future__ import annotations
@@ -24,12 +28,10 @@ import html
 import json
 import os
 import re
-import ssl
+import sqlite3
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from collections import defaultdict
 from email.message import EmailMessage
 from pathlib import Path
@@ -154,7 +156,10 @@ def load_config(path: str | None = None) -> dict:
     # is tested, but defence in depth means a bypassed guard lands somewhere
     # that can only read one file
     paths.setdefault("ssh_user", "skibidi-metrics")
-    config["panel"].setdefault("xui_cli", "/usr/local/x-ui/x-ui")
+    panel = config["panel"]
+    panel.setdefault("db", "/etc/x-ui/x-ui.db")
+    panel.setdefault("xui_bin", "/usr/local/x-ui/x-ui")
+    panel.setdefault("xray_bin", "/usr/local/x-ui/bin/xray-linux-amd64")
     return config
 
 
@@ -196,84 +201,92 @@ def format_bytes(count) -> str:
     return f"{count:.1f} TiB"
 
 
-# ---------------------------------------------------------------- panel
+# ---------------------------------------------------------------- panel database
 
 
 class PanelError(Exception):
     pass
 
 
-def mint_token(xui_cli: str) -> str:
-    """Ask the panel's own CLI for a fresh API token.
+def open_panel_db(path: str) -> sqlite3.Connection:
+    """The panel's database, opened so that this process cannot write it.
 
-    The database stores only a hash, so there is nothing to read back later:
-    the plaintext exists exactly once, here, and stays in this process. Each
-    call reissues under the cli-fallback name, which this report owns on the
-    master — anything else binding to that name would be knocked out weekly.
+    mode=ro refuses every write below SQL level and never creates a missing
+    file, so a bug here cannot damage what the panel owns, and a master with
+    no panel reads as an error rather than as an empty fleet.
     """
-    result = subprocess.run(
-        [xui_cli, "setting", "-getApiToken"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    if result.returncode != 0:
-        raise PanelError(f"x-ui CLI refused: {result.stderr.strip() or result.returncode}")
-    candidates = [
-        word for word in result.stdout.split()
-        if len(word) >= 16 and re.fullmatch(r"[A-Za-z0-9._=+/-]+", word)
-    ]
-    if not candidates:
-        raise PanelError("x-ui CLI printed nothing that looks like a token")
-    return candidates[-1]
+    if not Path(path).is_file():
+        raise PanelError(f"no panel database at {path}")
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
+    connection.execute("PRAGMA query_only = ON")
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
-class Panel:
-    """The slice of the skill's API client this report needs.
+def db_inbounds(connection: sqlite3.Connection) -> list[dict]:
+    """Inbounds shaped the way the API served them, so everything downstream —
+    the sanitiser, the traffic deltas, the client questions — reads one shape.
+    A panel release that renames a column fails here, in one place, and the
+    deploy-time rehearsal is where it fails."""
+    inbounds = []
+    rows = connection.execute(
+        "SELECT id, up, down, remark, enable, port, protocol, settings, node_id FROM inbounds"
+    ).fetchall()
+    for row in rows:
+        stats = connection.execute(
+            "SELECT email, up, down, total, expiry_time, enable, last_online "
+            "FROM client_traffics WHERE inbound_id = ?",
+            (row["id"],),
+        ).fetchall()
+        inbounds.append({
+            "id": row["id"],
+            "up": row["up"],
+            "down": row["down"],
+            "remark": row["remark"],
+            "enable": bool(row["enable"]),
+            "port": row["port"],
+            "protocol": row["protocol"],
+            "settings": row["settings"],
+            "nodeId": row["node_id"],
+            "clientStats": [
+                {
+                    "email": stat["email"],
+                    "up": stat["up"],
+                    "down": stat["down"],
+                    "total": stat["total"],
+                    "expiryTime": stat["expiry_time"],
+                    "enable": bool(stat["enable"]),
+                    "lastOnline": stat["last_online"],
+                }
+                for stat in stats
+            ],
+        })
+    return inbounds
 
-    Same two panel behaviours shape it: an unauthenticated request answers 404
-    unless it announces itself as XHR, and an unserved path answers success
-    with an empty body — so the header is always sent and empty is an error.
-    """
 
-    def __init__(self, url: str, token: str, verify_tls: bool = False):
-        self.base = url.rstrip("/") + "/panel/api"
-        self.token = token
-        self.context = (
-            ssl.create_default_context() if verify_tls else ssl._create_unverified_context()
-        )
+def db_nodes(connection: sqlite3.Connection) -> list[dict]:
+    """The fleet as the master last heard it: the panel persists each node's
+    heartbeat, latency and versions beside its address, so the letter's view
+    of the nodes needs no token either. A panel without node mode has no
+    table, which is an empty fleet rather than an error."""
+    try:
+        rows = connection.execute(
+            "SELECT name, remark, status, last_heartbeat, latency_ms, cpu_pct, mem_pct, "
+            "panel_version, xray_version FROM nodes"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [dict(row) for row in rows]
 
-    def request(self, method: str, path: str):
-        request = urllib.request.Request(
-            f"{self.base}/{path.lstrip('/')}",
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json",
-                "User-Agent": "skibidi-report",
-            },
-            method=method,
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30, context=self.context) as response:
-                raw = response.read()
-                status = response.status
-        except urllib.error.HTTPError as error:
-            raw, status = error.read(), error.code
-        except urllib.error.URLError as error:
-            raise PanelError(f"cannot reach the panel: {error.reason}") from error
-        if status >= 400 or not raw:
-            raise PanelError(f"{method} {path}: HTTP {status}, body {len(raw)} bytes")
-        payload = json.loads(raw)
-        if isinstance(payload, dict) and "success" in payload:
-            if not payload.get("success"):
-                raise PanelError(f"{method} {path}: {payload.get('msg') or 'refused'}")
-            return payload.get("obj")
-        return payload
 
-    def get(self, path: str):
-        return self.request("GET", path)
-
-    def post(self, path: str):
-        return self.request("POST", path)
+def binary_version(argv: list[str]) -> str:
+    """The first version-looking word a binary prints for its version flag."""
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    match = re.search(r"\d+\.\d+(\.\d+)?", result.stdout + result.stderr)
+    return match.group(0) if match else ""
 
 
 def client_traffic(client: dict) -> tuple[int, int, int]:
@@ -320,21 +333,18 @@ def sanitise_inbound(inbound: dict) -> dict:
     }
 
 
-def sanitise_routing(panel: Panel) -> list:
-    """Routing rules, unwrapped from the double envelope the panel serves.
+def db_routing(connection: sqlite3.Connection) -> list:
+    """Routing rules out of the xray template the panel keeps in its settings.
 
-    POST with the trailing slash — without it the panel answers 307, which
-    urllib does not follow for POST. The payload is a JSON string holding
-    xraySetting, which may itself be a string again.
+    Only the rules, and never their `user` field: the structure is what the
+    Monday diff compares, and a client name belongs in the client sections.
     """
-    raw = panel.post("xray/")
-    for _ in range(2):
-        if isinstance(raw, str):
-            raw = json.loads(raw)
-    setting = raw.get("xraySetting") if isinstance(raw, dict) else None
-    for _ in range(2):
-        if isinstance(setting, str):
-            setting = json.loads(setting)
+    row = connection.execute(
+        "SELECT value FROM settings WHERE key = 'xrayTemplateConfig'"
+    ).fetchone()
+    if not row or not row["value"]:
+        return []
+    setting = json.loads(row["value"])
     rules = (((setting or {}).get("routing")) or {}).get("rules") or []
     kept = []
     for rule in rules:
@@ -353,10 +363,9 @@ def take_snapshot(config: dict, now=None) -> dict:
     report = config["report"]
     zone = ZoneInfo(report.get("timezone", "Europe/Moscow"))
     now = now or dt.datetime.now(dt.UTC)
-    token = mint_token(config["panel"]["xui_cli"])
-    panel = Panel(config["panel"]["url"], token, config["panel"].get("verify_tls", False))
+    connection = open_panel_db(config["panel"]["db"])
 
-    inbounds = panel.get("inbounds/list") or []
+    inbounds = db_inbounds(connection)
     traffic = {"inbounds": {}, "clients": {}}
     structure = {"inbounds": [], "routing": []}
     for inbound in inbounds:
@@ -379,9 +388,10 @@ def take_snapshot(config: dict, now=None) -> dict:
                 "last_online": last_online,
             }
     try:
-        structure["routing"] = sanitise_routing(panel)
-    except (PanelError, json.JSONDecodeError, AttributeError) as error:
+        structure["routing"] = db_routing(connection)
+    except (sqlite3.Error, json.JSONDecodeError, AttributeError) as error:
         print(f"routing snapshot: {error}", file=sys.stderr)
+    connection.close()
 
     payload = {
         "taken_us": int(now.timestamp() * 1_000_000),
@@ -618,36 +628,31 @@ def health_rows(exports: dict[str, dict]) -> list[dict]:
 def gather_panel(config: dict, end_us: int):
     """The fleet as the panel sees it now, plus the client questions the
     letter asks: who is silent, who is near a limit or an expiry."""
-    token = mint_token(config["panel"]["xui_cli"])
-    panel = Panel(config["panel"]["url"], token, config["panel"].get("verify_tls", False))
+    panel = config["panel"]
+    connection = open_panel_db(panel["db"])
     data = {"nodes": [], "clients": [], "versions": {}}
-    status = panel.get("server/status") or {}
     data["versions"]["master"] = {
-        "panel": str(status.get("appVersion") or status.get("version") or ""),
-        "xray": str((status.get("xray") or {}).get("version") or ""),
+        "panel": binary_version([panel["xui_bin"], "-v"]),
+        "xray": binary_version([panel["xray_bin"], "version"]),
     }
-    try:
-        listed = panel.get("nodes/list") or []
-    except PanelError:
-        listed = []
-    for node in listed:
+    for node in db_nodes(connection):
         data["nodes"].append({
-            "name": str(node.get("name") or node.get("remark") or node.get("id")),
-            "online": bool(node.get("online") or node.get("status") in (1, "online")),
-            "heartbeat": int(node.get("lastHeartbeat") or 0),
-            "latency_ms": node.get("latencyMs"),
-            "cpu": node.get("cpuPct"),
-            "mem": node.get("memPct"),
-            "panel_version": str(node.get("panelVersion") or ""),
-            "xray_version": str(node.get("xrayVersion") or ""),
+            "name": str(node.get("name") or node.get("remark") or ""),
+            "online": node.get("status") == "online",
+            "heartbeat": int(node.get("last_heartbeat") or 0),
+            "latency_ms": node.get("latency_ms"),
+            "cpu": node.get("cpu_pct"),
+            "mem": node.get("mem_pct"),
+            "panel_version": str(node.get("panel_version") or ""),
+            "xray_version": str(node.get("xray_version") or ""),
         })
     now_ms = end_us // 1000
-    for inbound in panel.get("inbounds/list") or []:
+    for inbound in db_inbounds(connection):
         for client in inbound.get("clientStats") or []:
             up, down, last_online = client_traffic(client)
             total_cap = int(client.get("total") or 0)
             expiry_ms = int(client.get("expiryTime") or 0)
-            used = int(client.get("up") or up) + int(client.get("down") or down)
+            used = up + down
             data["clients"].append({
                 "label": client_label(client.get("email")),
                 "inbound": str(inbound.get("remark") or ""),
@@ -656,6 +661,7 @@ def gather_panel(config: dict, end_us: int):
                 "cap_share": used / total_cap if total_cap else None,
                 "expires_days": (expiry_ms - now_ms) / 86400000 if expiry_ms > 0 else None,
             })
+    connection.close()
     return data
 
 
@@ -671,7 +677,7 @@ def collect_alerts(data: dict) -> list[str]:
     for name in data.get("stale", []):
         alerts.append(f"{name}'s collector stopped before the window ended; its numbers are partial")
     if data.get("panel_error"):
-        alerts.append(f"the panel did not answer: {data['panel_error']}")
+        alerts.append(f"the panel database did not answer: {data['panel_error']}")
     for row in data.get("health", []):
         if row["disk_last"] is not None and row["disk_last"] >= 0.85:
             left = (1 - row["disk_last"]) * (row["disk_total"] or 0)
@@ -1274,7 +1280,7 @@ def assemble(config: dict, now=None) -> dict:
 
     try:
         data["panel"] = gather_panel(config, end_us)
-    except (PanelError, subprocess.TimeoutExpired, OSError) as error:
+    except (PanelError, sqlite3.Error, json.JSONDecodeError, OSError) as error:
         data["panel"] = None
         data["panel_error"] = str(error)
 

@@ -39,15 +39,47 @@
       changed_when: false
 
     # The panel holds every client secret and the Reality private keys. A public
-    # bind is the one failure that cannot be walked back after it is noticed
-    - name: The panel is not listening on a public address
+    # bind is the one failure that cannot be walked back after it is noticed.
+    # Both clauses: a panel that is not listening at all would otherwise pass
+    - name: The panel listens on the tunnel address and nowhere else
       ansible.builtin.assert:
-        that: >-
-          verify_sockets.stdout_lines
-          | select('search', ':' ~ xui_panel_port)
-          | reject('search', xui_listen_ip)
-          | list | length == 0
-        fail_msg: "panel port {{ xui_panel_port }} answers somewhere other than {{ xui_listen_ip }}"
+        that:
+          - verify_sockets.stdout_lines | select('search', ':' ~ xui_panel_port) | list | length > 0
+          - >-
+            verify_sockets.stdout_lines
+            | select('search', ':' ~ xui_panel_port)
+            | reject('search', xui_listen_ip)
+            | list | length == 0
+        fail_msg: "panel port {{ xui_panel_port }} answers somewhere other than {{ xui_listen_ip }}, or not at all"
+
+    # Every file under the panel's directory carries the client secrets, the
+    # backups included. Readable beyond root is the thing the role closes
+    - name: Look for anything under the panel's directory readable beyond root
+      ansible.builtin.shell:
+        cmd: >-
+          find {{ xui_db | dirname }} -maxdepth 1 \( -perm -o+r -o -perm -g+r \)
+          \( -type d -o -name "{{ xui_db | basename }}*" \)
+        executable: /bin/bash
+      register: verify_db_perms
+      changed_when: false
+
+    - name: The database and its copies are readable by root alone
+      ansible.builtin.assert:
+        that: verify_db_perms.stdout | trim | length == 0
+        fail_msg: "readable beyond root: {{ verify_db_perms.stdout_lines | join(', ') }}"
+
+    # A jail can be loaded and green while reading the journal instead of the
+    # file its filter was written for; the file it holds open is the proof
+    - name: Ask fail2ban which file the panel's jail opened
+      ansible.builtin.command:
+        argv: [fail2ban-client, get, 3x-ipl, logpath]
+      register: verify_ipl_logpath
+      changed_when: false
+
+    - name: The panel's jail reads the panel's log
+      ansible.builtin.assert:
+        that: "'/var/log/x-ui/3xipl.log' in verify_ipl_logpath.stdout"
+        fail_msg: "the 3x-ipl jail opened {{ verify_ipl_logpath.stdout | trim or 'nothing' }}"
 
     - name: Read the firewall state
       ansible.builtin.command: ufw status verbose

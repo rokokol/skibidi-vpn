@@ -1,0 +1,16 @@
+---
+# Secrets the roles need and the node registry never holds. Copy to vault.yml,
+# encrypt with `ansible-vault encrypt vault.yml`, and pass it to every play:
+#
+#   ansible-playbook site.yml -e @vault.yml --ask-vault-pass
+#
+# vault.yml is git-ignored and the secret gate refuses a literal here, so the
+# only copy that can exist is the encrypted one
+
+# A reusable, pre-authorised Tailscale key. Only read on a node that is not
+# yet on the tailnet, so a play without it still runs against joined nodes
+tailscale_auth_key: replace-me
+
+# Cloudflare API token scoped to Zone:DNS:Edit on the one zone the wildcard
+# lives in. acme.sh keeps it in its own account.conf after the first issue
+certs_cf_token: replace-me

@@ -28,15 +28,125 @@
 # variable holds the bare number and the prefix is added here. Passing the bare
 # number made the installer 404, which only showed up in the VM test: on a node
 # that already ran this version, the install step never runs at all
-- name: Install 3x-ui
+- name: Note whether the panel is about to be installed or upgraded
+  ansible.builtin.set_fact:
+    xui_install_pending: "{{ (xui_installed.stdout | default('') | trim) != xui_version }}"
+
+- name: Look for a database the upgrade would migrate
+  ansible.builtin.stat:
+    path: "{{ xui_db }}"
+  register: xui_db_present
+
+# An upgrade migrates the schema on first start, which is the largest thing
+# this role ever does to the database, so it gets the same copy a settings
+# change gets. umask 077: sqlite creates the copy with the default mode, and a
+# world-readable copy of every client credential is what the panel's own
+# database already is until the permissions task below
+- name: Back up the database before the panel migrates it
   ansible.builtin.shell:
     cmd: >-
-      set -o pipefail &&
-      curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/main/install.sh
-      | bash -s v{{ xui_version }}
-    executable: /bin/bash
-  when: (xui_installed.stdout | default('') | trim) != xui_version
+      umask 077 &&
+      sqlite3 {{ xui_db }} ".backup '{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}'"
+    creates: "{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+  when:
+    - xui_install_pending
+    - xui_db_present.stat.exists
+
+# The script is fetched to disk first so its digest can be checked; piping
+# it straight into bash would run whatever the CDN handed over
+- name: Fetch the installer at the pinned commit
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/MHSanaei/3x-ui/{{ xui_installer_commit }}/install.sh
+    dest: /root/x-ui-install-{{ xui_installer_commit }}.sh
+    checksum: sha256:{{ xui_installer_sha256 }}
+    owner: root
+    group: root
+    mode: "0700"
+  when: xui_install_pending
+
+# stdin from /dev/null and the non-interactive switch set by hand: the
+# installer decides whether to prompt by asking if stdin is a terminal, and a
+# session that arrived with a pseudo-terminal (molecule's, or any ssh -t)
+# makes it wait forever on a question nobody will answer. Piping the script
+# into bash used to hide this by accident, because the pipe was the stdin
+- name: Install 3x-ui
+  ansible.builtin.shell:
+    cmd: /bin/bash /root/x-ui-install-{{ xui_installer_commit }}.sh v{{ xui_version }} </dev/null
+  environment:
+    XUI_NONINTERACTIVE: "1"
+  when: xui_install_pending
   changed_when: true
+
+- name: Remove the installer once it has run
+  ansible.builtin.file:
+    path: /root/x-ui-install-{{ xui_installer_commit }}.sh
+    state: absent
+  when: xui_install_pending
+
+# The installer fetches the management script from `main` whatever tag it
+# was given, and the panel's own menu runs that script as root. The pinned
+# one goes back on top; get_url compares the digest, so this is a no-op on
+# every run where it already matches
+- name: Put the pinned management script where the panel's menu runs it
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/MHSanaei/3x-ui/{{ xui_installer_commit }}/x-ui.sh
+    dest: /usr/bin/x-ui
+    checksum: sha256:{{ xui_script_sha256 }}
+    owner: root
+    group: root
+    mode: "0755"
+
+# The one thing the installer downloads that cannot be checked beforehand is
+# the release tarball, so the check is on what it produced. Always, not only
+# after an install: the pin is a statement about the node, and a binary that
+# drifted from it - by a tampered download or by the panel's own update menu
+# - is drift the deploy must name
+- name: Read the digest of the panel binary
+  ansible.builtin.stat:
+    path: /usr/local/x-ui/x-ui
+    checksum_algorithm: sha256
+  register: xui_binary
+
+- name: The panel binary is the one the pinned release carries
+  ansible.builtin.assert:
+    that:
+      - xui_binary.stat.exists
+      - xui_binary.stat.checksum == xui_binary_sha256
+    fail_msg: >-
+      /usr/local/x-ui/x-ui has digest {{ xui_binary.stat.checksum | default('none') }},
+      not the {{ xui_binary_sha256 }} of release v{{ xui_version }}; the panel on
+      this node is not the one this repository pins
+  when: not ansible_check_mode or xui_binary.stat.exists
+
+# The panel creates its directory 0755 and its database under the default
+# umask, so x-ui.db, its WAL and every backup beside it are readable by any
+# local account - including the unprivileged one the metrics export runs as.
+# The panel runs as root and reads nothing through another account, so root
+# alone is the only mode that costs nothing
+- name: Keep the panel's directory closed to everyone but root
+  ansible.builtin.file:
+    path: "{{ xui_db | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Find the database, its journal and its copies
+  ansible.builtin.find:
+    paths: "{{ xui_db | dirname }}"
+    patterns: "{{ xui_db | basename }}*"
+    file_type: file
+  register: xui_db_files
+
+- name: Keep every one of them readable by root alone
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ xui_db_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
 
 # Read before write. The settings command below cannot report whether it changed
 # anything, so asking the database first is what separates "nothing to do" from
@@ -68,8 +178,9 @@
 # nothing but the node. Taking one on every run instead fills /etc/x-ui with
 # copies of a file that never changed, each holding every client credential
 - name: Back up the database before changing its settings
-  ansible.builtin.command:
+  ansible.builtin.shell:
     cmd: >-
+      umask 077 &&
       sqlite3 {{ xui_db }} ".backup '{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}'"
     creates: "{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
   when: not xui_binding_matches
@@ -136,6 +247,17 @@
 - name: Apply the restart before asserting where the panel listens
   ansible.builtin.meta: flush_handlers
 
+# A panel that has not finished starting has no listener at all, and "no
+# listener on a public address" would read as success below. Waiting for the
+# socket is what makes the next assertion about the panel rather than about
+# the moment it was asked
+- name: Wait for the panel to open its socket
+  ansible.builtin.wait_for:
+    host: "{{ xui_listen_ip }}"
+    port: "{{ xui_panel_port }}"
+    timeout: 60
+  check_mode: false
+
 - name: Prove the panel listens where it was told and nowhere else
   ansible.builtin.shell:
     cmd: set -o pipefail && ss -ltnH "sport = :{{ xui_panel_port }}" | awk '{print $4}'
@@ -144,9 +266,14 @@
   changed_when: false
   check_mode: false
 
-- name: Fail if the panel is reachable from outside the tunnel
+# Both directions: no listener anywhere else, and at least one where it
+# belongs. Without the second clause an empty list passes, and a panel that
+# failed to bind at all reads as a panel bound correctly
+- name: Fail if the panel is reachable from outside the tunnel, or not at all
   ansible.builtin.assert:
-    that: xui_listeners.stdout_lines | reject('search', xui_listen_ip) | list | length == 0
+    that:
+      - xui_listeners.stdout_lines | length > 0
+      - xui_listeners.stdout_lines | reject('search', xui_listen_ip) | list | length == 0
     fail_msg: >-
-      panel listens on {{ xui_listeners.stdout_lines | join(', ') }}, expected only
+      panel listens on {{ xui_listeners.stdout_lines | join(', ') or 'nothing' }}, expected only
       {{ xui_listen_ip }} — a panel on a public address exposes every client secret

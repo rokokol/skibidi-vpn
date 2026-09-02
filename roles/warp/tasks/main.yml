@@ -1,7 +1,10 @@
 ---
+# Carried here rather than fetched, for the same reason as the Tailscale key:
+# the key is what apt trusts, and a download checked against nothing is trust
+# in whoever answered. Refresh by diffing against https://pkg.cloudflareclient.com/pubkey.gpg
 - name: Install the keyring Cloudflare signs its packages with
-  ansible.builtin.get_url:
-    url: https://pkg.cloudflareclient.com/pubkey.gpg
+  ansible.builtin.copy:
+    src: cloudflare-warp-archive-keyring.gpg
     dest: /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
     owner: root
     group: root

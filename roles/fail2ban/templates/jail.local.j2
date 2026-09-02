@@ -6,11 +6,16 @@
 [DEFAULT]
 banaction = {{ fail2ban_banaction }}
 banaction_allports = {{ fail2ban_banaction }}[type=allports]
+# The journal backend, for the jails that read the journal. A jail that names a
+# file must say so itself: fail2ban drops `logpath` without a word the moment
+# the backend starts with "systemd" (jailreader.py), and the jail then watches
+# the whole journal with a pattern that never occurs there
 backend = {{ fail2ban_backend }}
 
 # Never ban the tunnel: an administrator locked out of the panel has to reach
-# the node another way, and the tunnel is that way
-ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
+# the node another way, and the tunnel is that way. The ranges are the same
+# declaration the metrics pull is pinned to, so the two cannot drift apart
+ignoreip = {{ fail2ban_ignoreip | join(' ') }}
 
 [sshd]
 enabled = true
@@ -22,6 +27,10 @@ bantime = {{ fail2ban_sshd_bantime }}
 # Reads fail2ban's own log, so it sees whoever came back after being banned
 [recidive]
 enabled = true
+# fail2ban writes its bans to the file below, not to the journal, so the jail
+# reading them cannot inherit the journal backend
+backend = auto
+logpath = /var/log/fail2ban.log
 findtime = {{ fail2ban_recidive_findtime }}
 bantime = {{ fail2ban_recidive_bantime }}
 maxretry = {{ fail2ban_recidive_maxretry }}
@@ -32,6 +41,9 @@ maxretry = {{ fail2ban_recidive_maxretry }}
 # only acts on what the panel already wrote down
 [3x-ipl]
 enabled = true
+# The panel writes a file; the jail has to read a file. This is the line the
+# panel's own jail carries, and dropping it silently unbans everyone
+backend = auto
 filter = 3x-ipl
 action = 3x-ipl[name=3X-IPL, port=0:65535, protocol=all, chain=INPUT, bantime={{ fail2ban_ipl_bantime }}]
 logpath = {{ fail2ban_ipl_logpath }}

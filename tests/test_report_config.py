@@ -31,7 +31,7 @@ def render(hostvars: dict, inventory_hostname: str = "master") -> dict:
         reporter_weekday="monday",
         reporter_weekday_index={"monday": 0},
         reporter_to="fleet@example.invalid",
-        reporter_panel_url="https://127.0.0.1/panel",
+        reporter_panel_db="/etc/x-ui/x-ui.db",
         reporter_state_dir="/var/lib/skibidi-report",
         reporter_sendmail="/usr/sbin/sendmail",
         metrics_export_user="skibidi-metrics",
@@ -72,6 +72,12 @@ class TestReportConfig(unittest.TestCase):
     def test_the_pull_arrives_as_the_export_account(self):
         config = render(HOSTVARS)
         self.assertEqual(config["paths"]["ssh_user"], "skibidi-metrics")
+
+    def test_the_panel_is_a_database_and_no_credential(self):
+        # A url or a token here would mean the API is back, and with it the
+        # rotation that knocks out every other holder of the CLI's token
+        config = render(HOSTVARS)
+        self.assertEqual(config["panel"], {"db": "/etc/x-ui/x-ui.db"})
 
 
 if __name__ == "__main__":

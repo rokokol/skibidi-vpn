@@ -197,6 +197,15 @@ for jail in {{ checker_required_jails | join(' ') }}; do
 done
 
 {% if fail2ban_ipl_enabled | default(true) %}
+# A jail can be loaded, green, and reading the wrong thing: with a journal
+# backend fail2ban drops the jail's logpath silently, and the panel's log is
+# never opened. Which file the jail holds open is the only honest question
+opened=$(fail2ban-client get 3x-ipl logpath 2>/dev/null)
+case "$opened" in
+    *"{{ fail2ban_ipl_logpath }}"*) ok "the 3x-ipl jail reads {{ fail2ban_ipl_logpath }}" ;;
+    *) fail "the 3x-ipl jail does not read {{ fail2ban_ipl_logpath }}; it watches the journal and bans nobody" ;;
+esac
+
 # A filter that no longer matches its log is the quiet failure here: the jail
 # loads, its status is green, and it bans nobody. The panel owns the log format
 # and can change it in any release, so the filter is tested against the log
@@ -229,6 +238,20 @@ else
         ok "the panel answers only on {{ xui_listen_ip }}"
     else
         fail "the panel also answers on $(echo "$stray" | tr '\n' ' ')"
+    fi
+fi
+
+# The panel creates its database world-readable, and every copy this role's
+# backup takes inherits that. The file holds every client credential and the
+# Reality private keys, so its mode is the whole difference between "root can
+# read it" and "the export account can read it"
+if [ -d "$(dirname {{ xui_db }})" ]; then
+    loose=$(find "$(dirname {{ xui_db }})" -maxdepth 1 \( -perm -o+r -o -perm -g+r \) \
+        \( -type d -o -name "$(basename {{ xui_db }})*" \) 2>/dev/null | wc -l)
+    if [ "$loose" -eq 0 ]; then
+        ok "the panel database and its copies are readable by root alone"
+    else
+        fail "$loose file(s) under $(dirname {{ xui_db }}) are readable beyond root; every client secret is in them"
     fi
 fi
 
@@ -295,6 +318,34 @@ else
         fail "the master has not answered for $seen consecutive checks"
     else
         ok "the master missed a check ($seen of {{ checker_master_failures_before_alert }})"
+    fi
+fi
+{% endif %}
+
+# --- the mail path ----------------------------------------------------------
+#
+# The letters name every client and every node. Either they ride the tunnel,
+# or they ride TLS; a cleartext session to a public address is the one shape
+# that must never appear, and it is exactly what a registry edit can produce
+
+{% if checker_smtp %}
+if [ -r /etc/msmtprc ]; then
+    intake_inside=$(python3 - <<'PYEOF'
+import ipaddress
+ranges = [ipaddress.ip_network(r) for r in "{{ metrics_tunnel_ranges | join(' ') }}".split()]
+try:
+    inside = any(ipaddress.ip_address("{{ checker_smtp | regex_replace(':[0-9]+$', '') }}") in r for r in ranges)
+except ValueError:  # a hostname resolves wherever DNS says today
+    inside = False
+print("yes" if inside else "no")
+PYEOF
+)
+    if grep -qE '^\s*tls\s+on' /etc/msmtprc; then
+        ok "the mail path is encrypted"
+    elif [ "$intake_inside" = "yes" ]; then
+        ok "the mail path stays on the tunnel"
+    else
+        fail "the mail path is cleartext to {{ checker_smtp }}, which is outside the tunnel"
     fi
 fi
 {% endif %}

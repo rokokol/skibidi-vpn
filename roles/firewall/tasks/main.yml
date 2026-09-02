@@ -66,13 +66,15 @@
   check_mode: false
   when: firewall_hide_tailscale_direct
 
+# An empty answer used to pass, for the fresh node where the daemon was not
+# installed yet. The tailscale role now runs first, so an empty answer means
+# the daemon's file does not say what port it uses, and a rule written against
+# a guess is the leak this check exists to prevent
 - name: Fail when the declared port is not the one the daemon listens on
   ansible.builtin.assert:
-    that: >-
-      firewall_tailscaled_port.stdout | trim == ''
-      or firewall_tailscaled_port.stdout | trim == firewall_tailscale_port | string
+    that: firewall_tailscaled_port.stdout | trim == firewall_tailscale_port | string
     fail_msg: >-
-      /etc/default/tailscaled says PORT={{ firewall_tailscaled_port.stdout | trim }}
+      /etc/default/tailscaled says PORT={{ firewall_tailscaled_port.stdout | trim or '(nothing)' }}
       but this role would write a rule for {{ firewall_tailscale_port }}.
       The rule would match nothing and the leak would continue unnoticed.
   when: firewall_hide_tailscale_direct

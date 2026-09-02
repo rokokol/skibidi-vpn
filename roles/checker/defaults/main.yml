@@ -10,6 +10,15 @@ checker_interval: 30min
 checker_alert_to: "{{ alert_to | default('') }}"
 checker_smtp: "{{ smtp | default('') }}"
 
+# The letters name every client and every node, so they never cross the
+# internet in clear. On a public intake that means STARTTLS with the server
+# verified against the system trust store; an intake on the tunnel is already
+# encrypted and authenticated below SMTP, and a certificate for a tunnel
+# address is not something a public CA issues, so there it is switched off.
+# The checker holds the invariant: TLS off is only ever accepted for an
+# address inside metrics_tunnel_ranges
+checker_smtp_tls: true
+
 # The panel this node is driven by, if any. A node knows its own master - that
 # is a property of the node, not a copy of the fleet - and checking it is how a
 # dead master gets noticed at all: the master cannot report its own death, and

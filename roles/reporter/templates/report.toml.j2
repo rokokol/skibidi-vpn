@@ -1,6 +1,7 @@
 # {{ ansible_managed }}
-# Read by /usr/local/sbin/skibidi-report. Holds no credential: the panel token
-# is minted by the panel's own CLI at each run and never touches disk.
+# Read by /usr/local/sbin/skibidi-report. Holds no credential: the panel is
+# read through its own database, opened read-only, and the nodes through a key
+# that can only ask for metrics.
 
 [report]
 timezone = "{{ reporter_timezone }}"
@@ -11,8 +12,7 @@ sender = "skibidi-vpn@{{ inventory_hostname }}"
 master_name = "{{ inventory_hostname }}"
 
 [panel]
-url = "{{ reporter_panel_url }}"
-verify_tls = false
+db = "{{ reporter_panel_db }}"
 
 [paths]
 state_dir = "{{ reporter_state_dir }}"

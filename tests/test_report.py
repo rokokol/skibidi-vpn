@@ -231,6 +231,68 @@ class TestSnapshotDiff(unittest.TestCase):
         self.assertIn("Grandmother", flat, "a name is the operator's own handle, not a secret")
 
 
+class TestPanelDatabase(unittest.TestCase):
+    """The panel is read through its database, so the shape the rest of the
+    letter expects is produced here and nowhere else; these hold that shape
+    against a synthetic database with the panel's own column names."""
+
+    def make_db(self):
+        import sqlite3
+
+        path = Path(tempfile.mkdtemp(prefix="skibidi-panel-")) / "x-ui.db"
+        with sqlite3.connect(path) as db:
+            db.executescript("""
+                CREATE TABLE inbounds (id INTEGER PRIMARY KEY, up INTEGER, down INTEGER,
+                    remark TEXT, enable INTEGER, port INTEGER, protocol TEXT,
+                    settings TEXT, node_id INTEGER);
+                CREATE TABLE client_traffics (id INTEGER PRIMARY KEY, inbound_id INTEGER,
+                    email TEXT, up INTEGER, down INTEGER, total INTEGER,
+                    expiry_time INTEGER, enable INTEGER, last_online INTEGER);
+                CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT);
+                CREATE TABLE nodes (id INTEGER PRIMARY KEY, name TEXT, remark TEXT,
+                    status TEXT, last_heartbeat INTEGER, latency_ms INTEGER,
+                    cpu_pct REAL, mem_pct REAL, panel_version TEXT, xray_version TEXT);
+                INSERT INTO inbounds VALUES (1, 10, 20, 'SE-exit', 1, 443, 'vless',
+                    '{"clients": [{"id": "11111111-2222-3333-4444-555555555555",
+                                   "email": "Grandmother", "subId": "abcdef"}]}', NULL);
+                INSERT INTO client_traffics VALUES (1, 1, 'Grandmother', 5, 7, 100, 0, 1, 1735680000000);
+                INSERT INTO settings VALUES (1, 'xrayTemplateConfig',
+                    '{"routing": {"rules": [{"outboundTag": "direct", "user": ["Grandmother"]}]}}');
+                INSERT INTO nodes VALUES (1, 'node-b', '', 'online', 1700000000, 42, 1.0, 20.0, '3.7.0', '25.1.1');
+            """)
+        return path
+
+    def test_inbounds_come_out_in_the_shape_the_letter_reads(self):
+        db = report.open_panel_db(str(self.make_db()))
+        inbounds = report.db_inbounds(db)
+        self.assertEqual(inbounds[0]["remark"], "SE-exit")
+        self.assertEqual(inbounds[0]["clientStats"][0]["email"], "Grandmother")
+        self.assertEqual(report.client_traffic(inbounds[0]["clientStats"][0]), (5, 7, 1735680000000))
+        sanitised = report.sanitise_inbound(inbounds[0])
+        self.assertNotIn("11111111", str(sanitised))
+
+    def test_routing_keeps_rules_and_drops_users(self):
+        db = report.open_panel_db(str(self.make_db()))
+        self.assertEqual(report.db_routing(db), [{"outboundTag": "direct"}])
+
+    def test_nodes_and_their_state_need_no_token(self):
+        db = report.open_panel_db(str(self.make_db()))
+        nodes = report.db_nodes(db)
+        self.assertEqual(nodes[0]["name"], "node-b")
+        self.assertEqual(nodes[0]["status"], "online")
+
+    def test_the_database_is_opened_read_only(self):
+        import sqlite3
+
+        db = report.open_panel_db(str(self.make_db()))
+        with self.assertRaises(sqlite3.OperationalError):
+            db.execute("DELETE FROM inbounds")
+
+    def test_a_missing_database_is_an_error_not_an_empty_fleet(self):
+        with self.assertRaises(report.PanelError):
+            report.open_panel_db("/nonexistent/x-ui.db")
+
+
 class TestMplStyle(unittest.TestCase):
     def test_a_delivered_style_file_owns_the_series_cycle(self):
         style = Path(tempfile.mkdtemp(prefix="skibidi-style-")) / "test.mplstyle"

@@ -60,7 +60,6 @@ provisioner:
         # stub instead of mailed: what the verifier reads is the exact bytes
         # a Monday would send
         reporter_to: report@example.test
-        reporter_panel_url: "http://127.0.0.1:2053/molecule/"
         reporter_sendmail: /usr/local/sbin/capture-sendmail
         metrics_watched_units: [x-ui, nginx, fail2ban]
 

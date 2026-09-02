@@ -117,9 +117,10 @@
     - skibidi-report.timer
   when: not ansible_check_mode
 
-# The first snapshot lands now, in front of someone: it proves the CLI mints a
-# token, the panel answers, and the sanitiser writes — the three things the
-# Monday diff will silently lack otherwise
+# The first snapshot lands now, in front of someone: it proves the database
+# opens read-only, its columns are the ones this release reads, and the
+# sanitiser writes — the three things the Monday diff will silently lack
+# otherwise
 - name: Take the first snapshot, now
   ansible.builtin.command:
     argv: [/usr/local/sbin/skibidi-report, snapshot]

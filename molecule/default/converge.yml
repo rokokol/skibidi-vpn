@@ -4,8 +4,8 @@
   become: true
   roles:
     - common
-    - firewall
     - tailscale
+    - firewall
     - xui
     - fail2ban
     - nginx

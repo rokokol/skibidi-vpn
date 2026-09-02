@@ -1,5 +1,7 @@
 # The private node registry never lives here. inventory.example/ is the template
 inventory/nodes/
+# The role secrets, passed with -e; vault.example.yml is the template
+/vault.yml
 
 # Secret-bearing artefacts. These are deliberately narrow: a blanket *secret*
 # once swallowed tests/no-secrets.sh, so the guard against leaks was itself
@@ -15,6 +17,8 @@ secrets/
 **/*credentials*
 
 *.retry
+# direnv's cache of the evaluated shell; the shell itself is the flake's
+.direnv/
 *.bak
 __pycache__/
 .venv/

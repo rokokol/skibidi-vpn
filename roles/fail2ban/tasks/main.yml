@@ -4,9 +4,9 @@
 # that runs before the panel is installed has its work overwritten the moment
 # the installer runs - visible only as a second play that keeps finding the same
 # work to do. Ours goes last and stays, and the difference is deliberate: the
-# panel's ban closes every port, while this one leaves SSH and the panel port
-# open, because a ban that catches your own address must not lock you out of the
-# machine you would fix it from.
+# panel's ban spares SSH and its own port, while this one closes everything by
+# default - administration arrives over the tunnel, which is never banned, so
+# an exception would only leave a banned client a way in.
 - name: Install fail2ban and what its actions call
   ansible.builtin.apt:
     name: [fail2ban, nftables, iptables]
@@ -135,4 +135,33 @@
       running, so nothing is being banned by it
   loop: "{{ ['sshd'] + (['recidive'] if fail2ban_recidive_enabled else [])
             + (['3x-ipl'] if fail2ban_ipl_enabled else []) }}"
+  when: not ansible_check_mode
+
+# A loaded jail is not a jail reading its log. With a journal backend fail2ban
+# drops the jail's logpath silently and the jail watches the journal instead,
+# where the panel and fail2ban itself never write - the jail is green, its
+# counters stay at zero, and nobody is banned. Asking fail2ban which file each
+# jail actually opened is the only question that tells the two apart
+- name: Ask fail2ban which file each file-reading jail opened
+  ansible.builtin.command:
+    argv: [fail2ban-client, get, "{{ item.jail }}", logpath]
+  loop: "{{ ([{'jail': 'recidive', 'path': '/var/log/fail2ban.log'}] if fail2ban_recidive_enabled else [])
+            + ([{'jail': '3x-ipl', 'path': fail2ban_ipl_logpath}] if fail2ban_ipl_enabled else []) }}"
+  loop_control:
+    label: "{{ item.jail }}"
+  register: fail2ban_logpaths
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Every file-reading jail reads its file, not the journal
+  ansible.builtin.assert:
+    that: item.item.path in item.stdout
+    fail_msg: >-
+      the {{ item.item.jail }} jail did not open {{ item.item.path }} (fail2ban
+      says: {{ item.stdout | trim }}); it inherited the journal backend and is
+      banning nobody
+  loop: "{{ fail2ban_logpaths.results }}"
+  loop_control:
+    label: "{{ item.item.jail }}"
   when: not ansible_check_mode

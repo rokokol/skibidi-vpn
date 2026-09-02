@@ -5,6 +5,11 @@
 fail2ban_banaction: nftables
 fail2ban_backend: systemd
 
+# Addresses a ban must never touch. The tunnel ranges come from the metrics
+# role's declaration rather than being spelled again here: two declarations of
+# "the tunnel" is how one of them ends up missing the IPv6 half
+fail2ban_ignoreip: "{{ ['127.0.0.1/8', '::1'] + metrics_tunnel_ranges }}"
+
 # SSH is the one door that is open to the whole internet on purpose: moving it
 # to a high port reads as hiding and works against the legend the node relies on
 fail2ban_sshd_maxretry: 5

@@ -15,8 +15,10 @@ reporter_send_minute: 7
 # Where the letter goes; the same intake the alerts already use
 reporter_to: "{{ alert_to | default('') }}"
 
-# The master's own panel, exactly as the registry declares it
-reporter_panel_url: "{{ panel | default('') }}"
+# The panel's own database, read-only. No API and no token: the CLI can only
+# mint a token by rotating the one it owns, which knocks out whoever else held
+# it, and the master already holds the file
+reporter_panel_db: "{{ xui_db | default('/etc/x-ui/x-ui.db') }}"
 
 reporter_state_dir: /var/lib/skibidi-report
 

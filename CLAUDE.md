@@ -21,6 +21,7 @@ nix develop
 ansible-playbook site.yml --syntax-check
 ansible-lint                 # must stay green at the production profile
 ./tests/no-secrets.sh
+./tests/falsify-secrets.sh   # plant five secrets in a throwaway copy, require red
 nix develop .#ci -c python3 -m unittest discover -s tests   # the report, on synthetic data
 nix develop .#ci -c python3 tests/falsify.py                # break each report guard, require red
 nix flake check
@@ -29,7 +30,7 @@ molecule test                # real Ubuntu VM under KVM
 
 ⚠️ **`.gitignore` patterns here are deliberately narrow.** A blanket `*secret*` once matched `tests/no-secrets.sh`, so the guard against leaking secrets was itself untracked — and only `nix flake check` noticed, because the file it wanted was missing from the flake source. Widen a pattern only after checking what else it swallows.
 
-⚠️ **A check that cannot go red is not evidence.** `tests/no-secrets.sh` was proven by planting a private key and a literal token and watching it fail. Do the same for anything new: break the thing it watches, run it, then restore.
+⚠️ **A check that cannot go red is not evidence.** `tests/no-secrets.sh` is proven by `tests/falsify-secrets.sh`, which plants secrets the way they really arrive — a YAML role default, a TOML node file, a vendor-prefixed key — and requires each to turn it red; the first version of the gate had only ever been tried with a TOML shape and waved a token in a role default straight through. Do the same for anything new: break the thing it watches, run it, then restore. Two more of that family, found the same way: a jail can be loaded and green while reading the journal instead of its file (ask `fail2ban-client get <jail> logpath`), and "no listener on a public address" passes when there is no listener at all (assert `length > 0` too).
 
 ## Writing tasks
 

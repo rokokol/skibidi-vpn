@@ -70,6 +70,11 @@ jobs:
       - name: Secret gate
         run: ./tests/no-secrets.sh
 
+      # The gate is proven able to fail: secrets are planted in a throwaway
+      # clone the way they would really arrive, and each must turn it red
+      - name: Secret gate falsification
+        run: ./tests/falsify-secrets.sh
+
       - name: Report tests
         run: nix develop .#ci -c python3 -m unittest discover -s tests -v
 
