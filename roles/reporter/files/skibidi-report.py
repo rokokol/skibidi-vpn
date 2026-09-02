@@ -509,6 +509,29 @@ def local_export(config: dict, start_us: int, end_us: int) -> dict:
     return json.loads(result.stdout)
 
 
+def probe(config: dict) -> int:
+    """The deploy's question, asked with the letter's own mouth.
+
+    Runs pull_node itself — same key, same account, same guard, same address —
+    so nothing can drift between what the deploy proved and what Monday does.
+    A hand-built ssh here once passed while the real pull was broken by a
+    nologin shell; that class of gap is exactly what reusing the code closes.
+    """
+    failures = []
+    for node in config["nodes"]:
+        try:
+            payload = pull_node(config, node, 0, 1)
+        except (StaleWindow, json.JSONDecodeError, subprocess.TimeoutExpired, OSError) as error:
+            failures.append(f"{node['name']}: {error}")
+            continue
+        if "samples" not in payload:
+            failures.append(f"{node['name']}: answered, but not with an export")
+    for line in failures:
+        print(line, file=sys.stderr)
+    print(f"probed {len(config['nodes'])} node(s), {len(failures)} refused")
+    return 1 if failures else 0
+
+
 def gather_metrics(config: dict, start_us: int, end_us: int, master_name: str):
     """Every node's window, with absence recorded rather than smoothed over.
 
@@ -1280,7 +1303,9 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[:1] == ["send"]:
         return send(config, print_only="--print" in argv[1:])
-    print("usage: skibidi-report snapshot | send [--print]", file=sys.stderr)
+    if argv[:1] == ["probe"]:
+        return probe(config)
+    print("usage: skibidi-report snapshot | send [--print] | probe", file=sys.stderr)
     return 2
 
 

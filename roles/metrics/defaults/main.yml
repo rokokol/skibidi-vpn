@@ -24,6 +24,11 @@ metrics_tunnel_ranges:
   - 100.64.0.0/10
   - fd7a:115c:a1e0::/48
 
+# "Until forever" for export windows in microseconds: sixteen nines is the
+# year 2286, comfortably past the fleet and comfortably inside the guard's
+# twenty-digit cap. A name, so the sentinel cannot drift between its uses
+metrics_forever_us: "9999999999999999"
+
 # Timers whose last-fired time the report shows; a quiet one is a mechanism
 # that stopped without saying so, and the checker alerts on it long before
 # Monday — the report only makes the pattern visible over the week

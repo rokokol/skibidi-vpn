@@ -352,12 +352,15 @@ fi
 if export_home=$(getent passwd {{ metrics_export_user }} | cut -d: -f6); then
     export_keys="$export_home/.ssh/authorized_keys"
     if [ -r "$export_keys" ]; then
-        loose=$(grep -vE '^[[:space:]]*$' "$export_keys" \
-            | grep -vcE '^from="[^"]+",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard" ' || true)
+        # The exact string the role writes, built from the same variables — not
+        # a pattern. A pattern that accepts "some from=" would wave through
+        # from="0.0.0.0/0", which un-pins the tunnel while looking dressed
+        leash='from="{{ metrics_tunnel_ranges | join(",") }}",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard" '
+        loose=$(awk -v leash="$leash" 'NF && index($0, leash) != 1' "$export_keys" | wc -l)
         if [ "$loose" -eq 0 ]; then
-            ok "every key on {{ metrics_export_user }} wears the full leash"
+            ok "every key on {{ metrics_export_user }} wears the exact leash"
         else
-            fail "$loose key(s) on {{ metrics_export_user }} lack from=/restrict/the guard command"
+            fail "$loose key(s) on {{ metrics_export_user }} do not wear the leash the role writes"
         fi
     fi
 fi

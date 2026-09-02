@@ -328,5 +328,37 @@ class TestTrafficSeries(unittest.TestCase):
         self.assertEqual(series[0][1], {"SE": 15}, "a reset must not yield a negative day")
 
 
+class TestProbe(unittest.TestCase):
+    """The deploy's pull probe must fail loudly, never vacuously.
+
+    It exists because a hand-built ssh once stayed green while the letter's
+    own pull was dead; the probe reuses pull_node, and these hold that a
+    refusing node turns the exit code, and that an answering fleet does not.
+    """
+
+    CONFIG = {"nodes": [{"name": "alpha", "host": "100.100.0.2"}]}
+
+    def setUp(self):
+        self.original = report.pull_node
+        self.addCleanup(setattr, report, "pull_node", self.original)
+
+    def test_a_refusing_node_fails_the_probe(self):
+        def refuse(config, node, start_us, end_us):
+            raise report.StaleWindow("this key exports metrics and does nothing else")
+
+        report.pull_node = refuse
+        self.assertEqual(report.probe(self.CONFIG), 1)
+
+    def test_an_answer_without_an_export_fails_the_probe(self):
+        # A node whose sshd answers with something that is not the export —
+        # a login banner, a shell's error — must not count as alive
+        report.pull_node = lambda config, node, start_us, end_us: {"unexpected": True}
+        self.assertEqual(report.probe(self.CONFIG), 1)
+
+    def test_an_answering_fleet_passes(self):
+        report.pull_node = lambda config, node, start_us, end_us: {"samples": []}
+        self.assertEqual(report.probe(self.CONFIG), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

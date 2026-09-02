@@ -99,7 +99,7 @@
       - --since
       - "0"
       - --until
-      - "9999999999999999"
+      - "{{ metrics_forever_us }}"
   become: true
   register: metrics_export
   changed_when: false

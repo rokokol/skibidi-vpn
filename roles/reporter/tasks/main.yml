@@ -76,28 +76,16 @@
     group: root
     mode: "0600"
 
-# The one proof the roles cannot fake: the same ssh the Monday letter will
-# make, as the same account, through the same guard. This is what catches a
-# chain broken between two working ends — a login shell that eats the forced
-# command, a key option sshd refuses — which no single-node check can see
+# The one proof the roles cannot fake: probe runs the letter's own pull_node —
+# same key, same account, same guard, same configured address. This catches a
+# chain broken between two working ends (a login shell that eats the forced
+# command, a key option sshd refuses), which no single-node check can see, and
+# it cannot drift from the letter because it is the letter's code
 - name: Prove each node answers the pull the way the letter will ask
   ansible.builtin.command:
-    argv:
-      - ssh
-      - -i
-      - /root/.ssh/skibidi-report
-      - -o
-      - BatchMode=yes
-      - -o
-      - ConnectTimeout=10
-      - -o
-      - StrictHostKeyChecking=accept-new
-      - "{{ metrics_export_user }}@{{ hostvars[item].metrics_host }}"
-      - skibidi-metrics export --since 0 --until 1
-  loop: "{{ groups['nodes'] | default([]) | difference([inventory_hostname]) | sort }}"
+    argv: [/usr/local/sbin/skibidi-report, probe]
   register: reporter_pull_probe
   changed_when: false
-  failed_when: reporter_pull_probe.rc != 0 or '"samples"' not in reporter_pull_probe.stdout
   when: not ansible_check_mode
 
 - name: Install the units
