@@ -1,7 +1,8 @@
 ---
-# Bans are written with nftables on these nodes while the panel's own IP-limit
-# action uses iptables. Mixing the two works because they are separate tables,
-# but it is stated here rather than left to be discovered
+# Every ban on the node is written with nftables, the panel's address-limit
+# one included: its action here is built on fail2ban's own nftables action
+# rather than the iptables one the panel ships, so `nft list ruleset` shows
+# all of them in one table
 fail2ban_banaction: nftables
 fail2ban_backend: systemd
 
@@ -30,9 +31,10 @@ fail2ban_ipl_logpath: /var/log/x-ui/3xipl.log
 fail2ban_ipl_findtime: 32
 fail2ban_ipl_bantime: 30m
 
-# Ports a ban must leave open. Empty on purpose: a ban that spares SSH leaves the
-# banned address a way in, and there is nothing to spare it for - administration
-# arrives over the tunnel, which `ignoreip` already excludes from banning, and
-# the panel answers on the tunnel address only. Set this only on a node with no
-# tunnel, where the public SSH port is the sole way back in
+# Ports a ban must leave open, comma-separated. Empty on purpose: a ban that
+# spares SSH leaves the banned address a way in, and there is nothing to spare
+# it for - administration arrives over the tunnel, which `ignoreip` already
+# excludes from banning, and the panel answers on the tunnel address only. Set
+# this only on a node with no tunnel, where the public SSH port is the sole way
+# back in
 fail2ban_ipl_exempt_ports: ""

@@ -54,18 +54,6 @@
     - { env: SKIBIDI_CHART_FONT, dest: /etc/skibidi/chart-font.otf }
   when: lookup('env', item.env) | length > 0
 
-# Checker delivers the same file to every node later in the play; this copy
-# exists so the deploy-time rehearsal on a fresh master already renders its
-# needs-attention box at the mako critical level rather than in the fallback
-- name: Carry the palette the alert levels are named in
-  ansible.builtin.copy:
-    content: "{{ lookup('env', 'SKIBIDI_PALETTE_JSON') }}"
-    dest: /etc/skibidi/palette.json
-    owner: root
-    group: root
-    mode: "0644"
-  when: lookup('env', 'SKIBIDI_PALETTE_JSON') | length > 0
-
 # 0600: the node addresses in here are the private registry's, and the whole
 # point of that registry is that they appear nowhere public
 - name: Write the report configuration

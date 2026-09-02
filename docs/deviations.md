@@ -40,9 +40,9 @@ Retired by: the intake moving onto the tailnet; then `smtp` becomes a tunnel add
 
 ## The panel installer runs with no terminal on purpose
 
-`install.sh` decides whether to prompt by asking whether stdin is a terminal. A session that arrives with a pseudo-terminal, molecule's or any `ssh -t`, made it wait forever on a question nobody would answer; piping the script into bash had hidden this by accident, because the pipe was the stdin. The role runs it with stdin from `/dev/null` and `XUI_NONINTERACTIVE=1`, the installer's own switch
+`install.sh` decides whether to prompt by asking whether stdin is a terminal. A session that arrives with a pseudo-terminal, molecule's or any `ssh -t`, made it wait forever on a question nobody would answer; piping the script into bash had hidden this by accident, because the pipe was the stdin. The role runs it with stdin from `/dev/null` and `XUI_NONINTERACTIVE=1`, and hands the port and base path in through the `XUI_*` knobs upstream documents under `deploy/`, which is the unattended contract the installer offers; the listen address has no knob there and is set by the role afterwards
 
-Retired by: nothing; this is how the installer is meant to be driven unattended, it just does not say so
+Retired by: nothing; this is the documented way to drive the installer unattended, and the pseudo-terminal is the only part upstream does not mention
 
 ## The Tailscale auth key travels through a file in /run
 

@@ -50,13 +50,7 @@
     - /root/acme.sh-{{ certs_acme_version }}
 
 # acme.sh keeps the token itself, in its account.conf, from the environment
-# the issue step passes it in. An earlier generation of this role also wrote
-# it to this path, which nothing ever read: a second copy of a zone-edit token
-# on every node, for no consumer
-- name: Remove the token copy nothing reads
-  ansible.builtin.file:
-    path: /etc/acme-cf-token
-    state: absent
+# the issue step passes it in; nothing else on the node holds it
 
 - name: Look for a certificate already installed
   ansible.builtin.stat:

@@ -13,10 +13,6 @@ import sys
 import unittest
 from pathlib import Path
 
-# Pinned before the module loads: a themed dev machine must not leak its own
-# /etc/skibidi/palette.json into what these tests assert
-os.environ["SKIBIDI_PALETTE_FILE"] = "/nonexistent/palette.json"
-
 SCRIPT = (
     Path(__file__).resolve().parent.parent
     / "roles" / "checker" / "files" / "skibidi-alert-html.py"
@@ -102,22 +98,14 @@ class TestAlertMessage(unittest.TestCase):
         body = html_part(build(css_path="/nonexistent/theme.css"))
         self.assertIn(alert.PALETTE_DEFAULTS["warn"], body)
 
-    def test_the_failed_box_falls_back_to_the_character_names(self):
-        # natsuki ground, ink text, plum border — how the user's mako config
-        # colours a critical notification; the level lives in the border
-        import json
+    def test_the_failed_box_takes_the_inform_colours_from_the_stylesheet(self):
         import tempfile
 
-        characters = Path(tempfile.mkdtemp(prefix="skibidi-pal-")) / "palette.json"
-        characters.write_text(json.dumps(
-            {"dot": "#FFDBF0", "blush": "#FFBDE1", "ink": "#222222"}))
-        os.environ["SKIBIDI_PALETTE_FILE"] = str(characters)
-        try:
-            body = html_part(build())
-            self.assertIn("#FFDBF0", body)
-            self.assertIn("#FFBDE1", body)
-        finally:
-            os.environ["SKIBIDI_PALETTE_FILE"] = "/nonexistent/palette.json"
+        css = Path(tempfile.mkdtemp(prefix="skibidi-css-")) / "theme.css"
+        css.write_text(":root { --ddlc-inform-ground: #FFDBF0; --ddlc-inform-border: #FFBDE1; }")
+        body = html_part(build(css_path=str(css)))
+        self.assertIn("#FFDBF0", body)
+        self.assertIn("#FFBDE1", body)
 
 
 class TestClassification(unittest.TestCase):

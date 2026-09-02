@@ -206,6 +206,14 @@ case "$opened" in
     *) fail "the 3x-ipl jail does not read {{ fail2ban_ipl_logpath }}; it watches the journal and bans nobody" ;;
 esac
 
+# The set a ban is written into has to exist in the kernel, or the jail is
+# reading its log for nothing
+if nft list set inet f2b-table addr-set-3x-ipl >/dev/null 2>&1; then
+    ok "the 3x-ipl ban set exists in nftables"
+else
+    fail "nftables has no addr-set-3x-ipl; the panel's bans have nowhere to land"
+fi
+
 # A filter that no longer matches its log is the quiet failure here: the jail
 # loads, its status is green, and it bans nobody. The panel owns the log format
 # and can change it in any release, so the filter is tested against the log

@@ -88,4 +88,3 @@ Everything that reads as a workaround and is not one is in [`docs/deviations.md`
 | `reporter` | the Monday letter, built from the panel's database and the fleet's metric stores; master only |
 | `checker` | the half-hourly self-check, mailed on failure straight past the master |
 | `warp` | Cloudflare WARP as a local proxy, with a watchdog that counts its own restarts |
-| `cleanup` | what the previous generation of this repository installed, removed and proven gone |

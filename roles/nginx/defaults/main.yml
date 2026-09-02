@@ -3,8 +3,6 @@
 # node: a second file also declaring `default_server` makes `nginx -t` fail, and
 # the validate step then aborts the play before anything is written
 nginx_conf_file: /etc/nginx/conf.d/default.conf
-nginx_conf_obsolete_files:
-  - /etc/nginx/conf.d/skibidi-vpn.conf
 
 # The distribution's own site also claims default_server on port 80. Two claims
 # is a fatal configuration error, so one of them has to go, and this role is the

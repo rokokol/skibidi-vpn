@@ -13,6 +13,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - The installers for the panel and for acme.sh ran whatever `main` or `get.acme.sh` served that day, as root. Both are now fetched at a pinned commit or release and checked against a digest before they run, and the panel's management script, which the installer fetches from `main` whatever tag it was given, is put back at its pinned digest afterwards; `xui_installer_*`, `xui_script_sha256` and `certs_acme_*` move together with the versions. What remains unpinned is the release tarball itself, which upstream publishes without a digest — reported to them
 - The panel binary is held to the digest of the pinned release on every run, so a tampered tarball and a panel updated from its own menu fail the deploy the same way
 - The apt signing keys for Tailscale and Cloudflare WARP are carried in the repository instead of downloaded at deploy time: a key decides what apt trusts, and a download checked against nothing is trust in whoever answered
+- The panel installer is driven through the unattended contract upstream documents under `deploy/`: the port and base path go in as `XUI_PANEL_PORT` and `XUI_WEB_BASE_PATH`, so a fresh node comes up where the registry says rather than on a random port first; the listen address has no knob and is still set afterwards
 - The panel installer is run with stdin from `/dev/null` and its non-interactive switch set: it decides whether to prompt by asking whether stdin is a terminal, and a session that arrived with a pseudo-terminal made it wait forever on a question nobody would answer. Piping the script into bash had hidden this, because the pipe was the stdin
 - Alerts and the weekly letter went to the intake in clear; the intake is public and offers STARTTLS, so the mailer now verifies the server against the system trust store, `checker_smtp_tls` turns it off only for an intake on the tunnel, and the checker refuses a cleartext path to any other address. The deploy sends one probe letter, because an open port is not an accepted letter
 - A panel upgrade migrated the database without the backup a settings change gets; the same copy is now taken before the installer runs on an existing database
@@ -25,6 +26,17 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - A play without its master in it (`--limit`, say) silently deployed nodes the letter could not read, because the master's public key was unknown; the metrics role now refuses and says why
 - The metrics collector named a failing ufw probe `<lambda>` in the journal
 - The inventory refuses a capability named `all`, `nodes` or `ungrouped`, which would have overwritten a group the roles hang on, and drops any host variable shaped like a credential
+
+### Removed
+
+- The `cleanup` role and the lists of drop-ins and configurations earlier generations wrote: the fleet has been converged for a while, the checker holds a node to one sysctl declaration and one port-80 server, and a migration that has already run is dead weight on every play after
+- The transitional `palette.json` and its fallback in both letter renderers: the locked theme revision exports the inform colours from its stylesheet, so the character names no longer need to ride along
+- The one-shot removal of `/etc/acme-cf-token`, which has run
+
+### Changed
+
+- The panel's address-limit ban is written with nftables like every other ban on the node: the action is built on fail2ban's own nftables action rather than the iptables one the panel ships, so `nft list ruleset` shows all bans in one table. The role and the checker require the jail's set to exist in the kernel, and the VM test bans a documentation address end to end and watches it land in the kernel and in the panel's ban log, then leave again
+- The metrics collector runs the apt upgrade simulation once an hour rather than at every ten-minute sample; the number changes daily at most and the report reads the last value
 
 ### Added
 

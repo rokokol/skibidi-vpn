@@ -9,7 +9,7 @@
 # an exception would only leave a banned client a way in.
 - name: Install fail2ban and what its actions call
   ansible.builtin.apt:
-    name: [fail2ban, nftables, iptables]
+    name: [fail2ban, nftables]
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -73,7 +73,8 @@
 # decision that belongs in the registry and has to survive a panel reinstall.
 # The panel's own version spares SSH and its port, which leaves a banned client
 # a way in that it does not need - administration arrives over the tunnel, and
-# the tunnel is excluded from banning entirely
+# the tunnel is excluded from banning entirely. It is also written with
+# nftables rather than the panel's iptables, so every ban lives in one table
 - name: Install the action that decides what a ban closes
   ansible.builtin.template:
     src: action-3x-ipl.conf.j2
@@ -165,3 +166,25 @@
   loop_control:
     label: "{{ item.item.jail }}"
   when: not ansible_check_mode
+
+# A jail whose action failed to start still reports itself loaded; the set
+# the action creates in the kernel is what a ban would be written into, so
+# its existence is the proof the action ran
+- name: Ask the kernel for the set the panel's bans go into
+  ansible.builtin.command:
+    argv: [nft, list, set, inet, f2b-table, addr-set-3x-ipl]
+  register: fail2ban_ipl_set
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: fail2ban_ipl_enabled
+
+- name: The panel's ban set exists in the kernel
+  ansible.builtin.assert:
+    that: fail2ban_ipl_set.rc == 0
+    fail_msg: >-
+      nftables has no set addr-set-3x-ipl in f2b-table; the 3x-ipl action did
+      not start and its bans have nowhere to land ({{ fail2ban_ipl_set.stderr | trim }})
+  when:
+    - fail2ban_ipl_enabled
+    - not ansible_check_mode

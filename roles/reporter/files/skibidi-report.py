@@ -44,8 +44,8 @@ except ModuleNotFoundError:  # pragma: no cover — Ubuntu 24.04 ships 3.12
 
 DAY_US = 86400 * 1_000_000
 
-# The neutral fallback; the deployed master overrides it with the DDLC palette
-# the flake is locked to, delivered as /etc/skibidi/palette.json at deploy time
+# The neutral fallback; the deployed master overrides it with the theme's own
+# report stylesheet, delivered as /etc/skibidi/ddlc-report.css at deploy time
 PALETTE_DEFAULTS = {
     "paper": "#ffffff",
     "ink": "#1f2430",
@@ -112,24 +112,11 @@ def load_palette(css: str | None = None) -> dict:
         palette["cycle"] = [named[variable] for variable in THEME_CYCLE]
     else:
         palette["cycle"] = [palette[slot] for slot in ("accent", "warn", "muted", "ok", "ink")]
-    # Needs-attention is the game's own inform dialog. The stylesheet's
-    # inform variables win; the character names from the raw palette remain
-    # as the transitional fallback for a theme revision from before the
-    # stylesheet learned to say inform
-    palette["inform_bg"] = palette["blush"]
-    palette["inform_border"] = palette["warn"]
-    if "--ddlc-inform-ground" in named:
-        palette["inform_bg"] = named["--ddlc-inform-ground"]
-        palette["inform_border"] = named.get(
-            "--ddlc-inform-border", palette["inform_border"])
-        return palette
-    try:
-        characters = json.loads(Path(os.environ.get(
-            "SKIBIDI_PALETTE_FILE", "/etc/skibidi/palette.json")).read_text())
-    except (OSError, ValueError):
-        characters = {}
-    palette["inform_bg"] = characters.get("dot", palette["inform_bg"])
-    palette["inform_border"] = characters.get("blush", palette["inform_border"])
+    # Needs-attention is the game's own inform dialog, and the stylesheet
+    # names its colours; a machine nobody themed gets the code ground with
+    # the warn colour as its frame
+    palette["inform_bg"] = named.get("--ddlc-inform-ground", palette["blush"])
+    palette["inform_border"] = named.get("--ddlc-inform-border", palette["warn"])
     return palette
 
 
@@ -290,17 +277,11 @@ def binary_version(argv: list[str]) -> str:
 
 
 def client_traffic(client: dict) -> tuple[int, int, int]:
-    """up, down, lastOnline — wherever this panel version put them.
-
-    Traffic lives in a nested `traffic` object rather than on the client in
-    the fleet's version; older shapes carry it flat. Reading both keeps a
-    panel upgrade from silently zeroing the report's numbers.
-    """
-    source = client.get("traffic") if isinstance(client.get("traffic"), dict) else client
+    """up, down, lastOnline of a client row as db_inbounds shapes it."""
     return (
-        int(source.get("up") or 0),
-        int(source.get("down") or 0),
-        int(source.get("lastOnline") or client.get("lastOnline") or 0),
+        int(client.get("up") or 0),
+        int(client.get("down") or 0),
+        int(client.get("lastOnline") or 0),
     )
 
 

@@ -64,16 +64,21 @@
     mode: "0700"
   when: xui_install_pending
 
-# stdin from /dev/null and the non-interactive switch set by hand: the
-# installer decides whether to prompt by asking if stdin is a terminal, and a
-# session that arrived with a pseudo-terminal (molecule's, or any ssh -t)
-# makes it wait forever on a question nobody will answer. Piping the script
-# into bash used to hide this by accident, because the pipe was the stdin
+# The installer's unattended contract, documented in upstream's deploy/:
+# XUI_NONINTERACTIVE=1 turns every prompt into an env lookup or a default,
+# and the port and base path are handed in so a fresh node comes up where
+# the registry says rather than on a random port first. stdin from /dev/null
+# as well: the installer also treats a terminal on stdin as an invitation to
+# prompt, and a session that arrived with a pseudo-terminal (molecule's, or
+# any ssh -t) made it wait forever on a question nobody would answer. The
+# listen address has no knob and is set by the role below
 - name: Install 3x-ui
   ansible.builtin.shell:
     cmd: /bin/bash /root/x-ui-install-{{ xui_installer_commit }}.sh v{{ xui_version }} </dev/null
   environment:
     XUI_NONINTERACTIVE: "1"
+    XUI_PANEL_PORT: "{{ xui_panel_port }}"
+    XUI_WEB_BASE_PATH: "{{ xui_base_path | regex_replace('^/+|/+$', '') }}"
   when: xui_install_pending
   changed_when: true
 

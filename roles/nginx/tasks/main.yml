@@ -9,17 +9,6 @@
     # download
     cache_valid_time: 3600
 
-# Removed before the template is written, not after: `nginx -t` reads every file
-# in conf.d, so a leftover under another name would still be declaring
-# `default_server` when the new file is validated, and the play would abort
-- name: Remove configurations this role used to write
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop: "{{ nginx_conf_obsolete_files }}"
-  when: item != nginx_conf_file
-  notify: Reload nginx
-
 # Ubuntu ships an enabled site that claims default_server on port 80, and two
 # claims are a fatal error rather than a precedence question. This role owns
 # port 80, so the packaged one goes - the symlink only, leaving the file in

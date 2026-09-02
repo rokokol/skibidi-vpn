@@ -143,10 +143,25 @@ def probe_fail2ban():
                 yield metric, jail, float(found.group(1))
 
 
-def probe_updates():
+UPDATES_INTERVAL_US = int(os.environ.get("SKIBIDI_UPDATES_INTERVAL", "3600")) * 1_000_000
+
+
+def probe_updates(connection: sqlite3.Connection, now_us: int):
     # -s upgrade rather than the update-notifier file: the file only exists
-    # where update-notifier-common happens to be installed
+    # where update-notifier-common happens to be installed. Once an hour, not
+    # every run: a package index changes daily at most, the simulation costs
+    # seconds of CPU, and the report reads the last value either way
+    row = connection.execute(
+        "SELECT value FROM state WHERE key = 'updates_checked_us'"
+    ).fetchone()
+    if row and now_us - int(row[0]) < UPDATES_INTERVAL_US:
+        return
     out = run("apt-get", "-s", "-o", "Debug::NoLocking=true", "upgrade")
+    connection.execute(
+        "INSERT INTO state (key, value) VALUES ('updates_checked_us', ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (str(now_us),),
+    )
     yield "pkg_updates", "", float(sum(1 for line in out.splitlines() if line.startswith("Inst ")))
     yield "reboot_required", "", float(Path("/var/run/reboot-required").exists())
 
@@ -198,7 +213,6 @@ PROBES = [
     probe_conntrack,
     probe_stuck_sockets,
     probe_fail2ban,
-    probe_updates,
     probe_unit_restarts,
     probe_timers,
 ]
@@ -209,11 +223,13 @@ def collect() -> int:
     failed = []
     with connect() as connection:
         rows = []
-        # A lambda has a __name__ too, "<lambda>", so the journal line names
-        # the probe explicitly rather than trusting the attribute
-        drops = lambda: probe_ufw_drops(connection, now_us)  # noqa: E731
-        for probe in PROBES + [drops]:
-            name = "probe_ufw_drops" if probe is drops else probe.__name__
+        # The probes that need the store's clock and state are bound here;
+        # named explicitly, because a lambda's __name__ is "<lambda>"
+        bound = [
+            ("probe_updates", lambda: probe_updates(connection, now_us)),
+            ("probe_ufw_drops", lambda: probe_ufw_drops(connection, now_us)),
+        ]
+        for name, probe in [(p.__name__, p) for p in PROBES] + bound:
             try:
                 rows.extend((now_us, m, d, v) for m, d, v in probe())
             except Exception as error:  # noqa: BLE001 — one probe must not cost the run

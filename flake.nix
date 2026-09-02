@@ -59,10 +59,6 @@
           # the lockfile, never a copy in a tracked file
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
           SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
-          # Transitional: until the locked theme revision exports the critical
-          # variables itself, the character names ride along from the palette the
-          # theme was built from — reached through its graph, never a second pin
-          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-themes.inputs.ddlc-palette.lib.palette;
           # The charts' text face, deployed to the master so matplotlib there
           # letters its axes the way the tables around it are set
           SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
@@ -88,10 +84,6 @@
           ];
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
           SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
-          # Transitional: until the locked theme revision exports the critical
-          # variables itself, the character names ride along from the palette the
-          # theme was built from — reached through its graph, never a second pin
-          SKIBIDI_PALETTE_JSON = builtins.toJSON ddlc-themes.inputs.ddlc-palette.lib.palette;
           SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
         };
       });

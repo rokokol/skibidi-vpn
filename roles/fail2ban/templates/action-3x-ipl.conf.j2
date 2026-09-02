@@ -1,37 +1,40 @@
 # {{ ansible_managed }}
 #
-# Bans every port for the address. Nothing is spared by default: administration
-# arrives over the tunnel, which the jail's ignoreip excludes from banning
-# entirely, and the panel listens on the tunnel address only - so an exception
-# would weaken the ban without buying a way back in.
+# The panel's address-limit ban, written with nftables like every other ban
+# on the node, so one `nft list ruleset` shows all of them. Built on
+# fail2ban's own nftables action: the shared f2b-table, a set per jail, the
+# address-family handling — only what differs is stated here.
+#
+# Bans every protocol for the address. Nothing is spared by default:
+# administration arrives over the tunnel, which the jail's ignoreip excludes
+# from banning entirely, and the panel listens on the tunnel address only -
+# so an exception would weaken the ban without buying a way back in.
+[INCLUDES]
+before = nftables.conf
+
 [Definition]
-actionstart = <iptables> -N f2b-<name>
-              <iptables> -A f2b-<name> -j RETURN
-              <iptables> -I <chain> -p <protocol> -j f2b-<name>
-
-actionstop = <iptables> -D <chain> -p <protocol> -j f2b-<name>
-             <actionflush>
-             <iptables> -X f2b-<name>
-
-actioncheck = <iptables> -n -L <chain> | grep -q 'f2b-<name>[ \t]'
-
 {% if fail2ban_ipl_exempt_ports %}
-actionban = <iptables> -I f2b-<name> 1 -s <ip> -m multiport ! --dports {{ fail2ban_ipl_exempt_ports }} -j REJECT --reject-with icmp-port-unreachable
-            echo "$(date -Is) BAN <ip>" >> /var/log/x-ui/3xipl-banned.log
-
-actionunban = <iptables> -D f2b-<name> -s <ip> -m multiport ! --dports {{ fail2ban_ipl_exempt_ports }} -j REJECT --reject-with icmp-port-unreachable
-              echo "$(date -Is) UNBAN <ip>" >> /var/log/x-ui/3xipl-banned.log
+# Every transport port except the exempt ones; th is the transport header,
+# so this reads tcp and udp alike
+rule_match-allports = th dport != \{ {{ fail2ban_ipl_exempt_ports | replace(',', ', ') }} \}
 {% else %}
-actionban = <iptables> -I f2b-<name> 1 -s <ip> -j REJECT --reject-with icmp-port-unreachable
-            echo "$(date -Is) BAN <ip>" >> /var/log/x-ui/3xipl-banned.log
-
-actionunban = <iptables> -D f2b-<name> -s <ip> -j REJECT --reject-with icmp-port-unreachable
-              echo "$(date -Is) UNBAN <ip>" >> /var/log/x-ui/3xipl-banned.log
+# No layer-4 match at all: the source address is the whole rule
+rule_match-allports =
 {% endif %}
 
+# The panel's own log of who was banned and when, which its menu reads
+actionban = <nftables> add element <table_family> <table> <addr_set> \{ <ip> \}
+            echo "$(date -Is) BAN <ip>" >> <banned_log>
+
+actionunban = <nftables> delete element <table_family> <table> <addr_set> \{ <ip> \}
+              echo "$(date -Is) UNBAN <ip>" >> <banned_log>
+
 [Init]
-name = 3X-IPL
-protocol = all
-chain = INPUT
-actionflush = <iptables> -F f2b-<name>
-iptables = iptables -w
+type = allports
+name = 3x-ipl
+banned_log = {{ fail2ban_ipl_logpath | dirname }}/3xipl-banned.log
+# fail2ban defers actionstart to the first ban for any action with a
+# per-family section, which the nftables action has. Started at jail start
+# instead, so the set a ban lands in exists from the beginning and its
+# absence means what the checker says it means
+actionstart_on_demand = false

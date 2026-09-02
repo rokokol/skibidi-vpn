@@ -1,11 +1,8 @@
 ---
 # The drop-in this role owns. The name matters: a second file declaring the same
-# keys silently wins if it sorts later, so the role also removes the names this
-# fleet has used before
+# keys silently wins if it sorts later, which is why the checker holds the
+# node to exactly one file declaring them
 common_sysctl_file: /etc/sysctl.d/60-skvpn.conf
-common_sysctl_obsolete_files:
-  - /etc/sysctl.d/60-vpn-infra.conf
-  - /etc/sysctl.d/60-skibidi-vpn.conf
 
 # Queue discipline and congestion control. fq is what BBR is designed against;
 # pairing them is the documented combination, not a tweak

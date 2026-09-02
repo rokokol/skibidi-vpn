@@ -24,7 +24,6 @@ from zoneinfo import ZoneInfo
 # and a test run must not try to write /var/lib
 os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="skibidi-mpl-")
 # A themed dev machine must not leak its own /etc/skibidi files into the tests
-os.environ["SKIBIDI_PALETTE_FILE"] = "/nonexistent/palette.json"
 os.environ["SKIBIDI_REPORT_CSS_FILE"] = "/nonexistent/ddlc-report.css"
 
 SCRIPT = (
@@ -361,19 +360,10 @@ class TestPalette(unittest.TestCase):
         self.assertEqual(palette["inform_bg"], "#FFDBF0")
         self.assertEqual(palette["inform_border"], "#FFBDE1")
 
-    def test_the_character_names_remain_the_transitional_fallback(self):
-        # For a theme revision from before the stylesheet learned to say inform
-        import json
-
-        characters = Path(tempfile.mkdtemp(prefix="skibidi-pal-")) / "palette.json"
-        characters.write_text(json.dumps({"dot": "#FFDBF0", "blush": "#FFBDE1"}))
-        os.environ["SKIBIDI_PALETTE_FILE"] = str(characters)
-        try:
-            palette = report.load_palette(THEME_CSS)
-            self.assertEqual(palette["inform_bg"], "#FFDBF0")
-            self.assertEqual(palette["inform_border"], "#FFBDE1")
-        finally:
-            os.environ["SKIBIDI_PALETTE_FILE"] = "/nonexistent/palette.json"
+    def test_without_inform_variables_the_box_is_code_ground_framed_in_warn(self):
+        palette = report.load_palette(THEME_CSS)
+        self.assertEqual(palette["inform_bg"], palette["blush"])
+        self.assertEqual(palette["inform_border"], palette["warn"])
 
 
 class TestTrafficSeries(unittest.TestCase):

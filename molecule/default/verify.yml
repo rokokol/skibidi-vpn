@@ -81,6 +81,39 @@
         that: "'/var/log/x-ui/3xipl.log' in verify_ipl_logpath.stdout"
         fail_msg: "the 3x-ipl jail opened {{ verify_ipl_logpath.stdout | trim or 'nothing' }}"
 
+    # A real ban, end to end: an address from the documentation range, which
+    # is never routed, is banned through fail2ban and looked for in the kernel
+    # and in the panel's ban log, then released and looked for again
+    - name: Ban a documentation address through the panel's jail
+      ansible.builtin.command:
+        argv: [fail2ban-client, set, 3x-ipl, banip, 203.0.113.9]
+      changed_when: true
+
+    - name: Read the kernel's set and the panel's ban log
+      ansible.builtin.shell:
+        cmd: nft list set inet f2b-table addr-set-3x-ipl; tail -1 /var/log/x-ui/3xipl-banned.log
+      changed_when: false
+      register: verify_ban
+
+    - name: Release it again
+      ansible.builtin.command:
+        argv: [fail2ban-client, set, 3x-ipl, unbanip, 203.0.113.9]
+      changed_when: true
+
+    - name: Read the kernel's set after the release
+      ansible.builtin.command:
+        argv: [nft, list, set, inet, f2b-table, addr-set-3x-ipl]
+      changed_when: false
+      register: verify_unban
+
+    - name: The ban reached the kernel and the log, and the release reached the kernel
+      ansible.builtin.assert:
+        that:
+          - "'203.0.113.9' in verify_ban.stdout"
+          - "'BAN 203.0.113.9' in verify_ban.stdout"
+          - "'203.0.113.9' not in verify_unban.stdout"
+        fail_msg: "ban: {{ verify_ban.stdout | trim }} / after release: {{ verify_unban.stdout | trim }}"
+
     - name: Read the firewall state
       ansible.builtin.command: ufw status verbose
       register: verify_ufw

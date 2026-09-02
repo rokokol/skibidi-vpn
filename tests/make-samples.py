@@ -22,10 +22,6 @@ os.environ["MPLCONFIGDIR"] = str(OUT / ".mpl")
 os.environ["SKIBIDI_REPORT_CSS_FILE"] = os.environ.get("SKIBIDI_REPORT_CSS", "")
 os.environ["SKIBIDI_MPLSTYLE_FILE"] = os.environ.get("SKIBIDI_MPLSTYLE", "")
 os.environ["SKIBIDI_CHART_FONT_FILE"] = os.environ.get("SKIBIDI_CHART_FONT", "")
-palette_json = os.environ.get("SKIBIDI_PALETTE_JSON", "")
-if palette_json:
-    (OUT / ".palette.json").write_text(palette_json)
-    os.environ["SKIBIDI_PALETTE_FILE"] = str(OUT / ".palette.json")
 
 
 def load(name, path):

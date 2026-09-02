@@ -112,18 +112,6 @@
     mode: "0644"
   when: lookup('env', 'SKIBIDI_REPORT_CSS') | length > 0
 
-# The raw palette beside it, because the alert levels follow the mako config's
-# character names (natsuki ground, plum border), which the stylesheet's
-# semantic variables deliberately do not re-export
-- name: Carry the palette the alert levels are named in
-  ansible.builtin.copy:
-    content: "{{ lookup('env', 'SKIBIDI_PALETTE_JSON') }}"
-    dest: /etc/skibidi/palette.json
-    owner: root
-    group: root
-    mode: "0644"
-  when: lookup('env', 'SKIBIDI_PALETTE_JSON') | length > 0
-
 - name: Install the check and the alert
   ansible.builtin.template:
     src: "{{ item.src }}"

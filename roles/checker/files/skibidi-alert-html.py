@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import html
-import json
 import os
 import re
 import sys
@@ -58,7 +57,7 @@ def parse_theme_css(text: str) -> dict:
     return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;\s]+)\s*;", root.group(1)))
 
 
-def load_palette(css_path: str, palette_path: str | None = None) -> dict:
+def load_palette(css_path: str) -> dict:
     try:
         named = parse_theme_css(Path(css_path).read_text())
     except OSError:
@@ -67,25 +66,11 @@ def load_palette(css_path: str, palette_path: str | None = None) -> dict:
     for slot, variable in THEME_ROLES.items():
         if variable in named:
             palette[slot] = named[variable]
-    # The failure box is the game's own inform dialog. The stylesheet's
-    # inform variables win; the character names from the raw palette remain
-    # as the transitional fallback for a theme revision from before the
-    # stylesheet learned to say inform
-    palette["inform_bg"] = palette["blush"]
-    palette["inform_border"] = palette["warn"]
-    if "--ddlc-inform-ground" in named:
-        palette["inform_bg"] = named["--ddlc-inform-ground"]
-        palette["inform_border"] = named.get(
-            "--ddlc-inform-border", palette["inform_border"])
-        return palette
-    try:
-        raw = Path(palette_path or os.environ.get(
-            "SKIBIDI_PALETTE_FILE", "/etc/skibidi/palette.json")).read_text()
-        characters = json.loads(raw)
-    except (OSError, ValueError):
-        characters = {}
-    palette["inform_bg"] = characters.get("dot", palette["inform_bg"])
-    palette["inform_border"] = characters.get("blush", palette["inform_border"])
+    # The failure box is the game's own inform dialog, and the stylesheet
+    # names its colours; a machine nobody themed gets the code ground with
+    # the warn colour as its frame
+    palette["inform_bg"] = named.get("--ddlc-inform-ground", palette["blush"])
+    palette["inform_border"] = named.get("--ddlc-inform-border", palette["warn"])
     return palette
 
 

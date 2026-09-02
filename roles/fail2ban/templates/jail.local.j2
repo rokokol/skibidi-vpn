@@ -45,7 +45,7 @@ enabled = true
 # panel's own jail carries, and dropping it silently unbans everyone
 backend = auto
 filter = 3x-ipl
-action = 3x-ipl[name=3X-IPL, port=0:65535, protocol=all, chain=INPUT, bantime={{ fail2ban_ipl_bantime }}]
+action = 3x-ipl[name=3x-ipl, bantime={{ fail2ban_ipl_bantime }}]
 logpath = {{ fail2ban_ipl_logpath }}
 maxretry = 1
 findtime = {{ fail2ban_ipl_findtime }}

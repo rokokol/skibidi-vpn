@@ -20,17 +20,6 @@
     - "tcp_{{ common_congestion_control }}"
     - nf_conntrack
 
-# A drop-in under an older name keeps declaring the same keys, and whichever
-# file sorts later wins. Removing them is what makes this role's file the only
-# declaration rather than merely the intended one
-- name: Remove drop-ins this fleet used before
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop: "{{ common_sysctl_obsolete_files }}"
-  when: item != common_sysctl_file
-  notify: Apply sysctl settings
-
 - name: Declare the kernel settings
   ansible.builtin.template:
     src: sysctl.conf.j2
