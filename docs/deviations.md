@@ -68,3 +68,11 @@ The tooling that writes these commits appends a byline of its own to commit mess
 
 Retired by: nothing. This is a convention, not a workaround: it stays as long as the defaults point the other way
 
+## The geo databases are refreshed by a timer of ours, not by the core's own
+
+Xray has an updater built in. The pinned core parses a `geodata` block and validates its cron — measured on 26.7.28: `{"geodata":{"cron":"0 4 * * *"}}` loads, `{"geodata":{"cron":"not-a-cron"}}` fails with "failed to build geodata configuration" — and the panel passes the block through (`internal/xray/config.go`) and offers the field in its own UI. Its install path is better than anything reachable from outside: it stages, swaps with backups, reloads the IP and domain registries in place and rolls the transaction back on failure, so the databases change under a running core with no restart and no dropped connection.
+
+The `geodata` role does not use it, and the reason is what that updater leaves out. It fetches unconditionally — no `If-Modified-Since`, no ETag — so every node would pull the full set on every tick forever, where the role's conditional request makes an unchanged day cost nothing. And it verifies nothing: its only check is that the download was non-empty, while all three upstreams publish a `sha256sum` beside each file. The role pays for verification and for near-zero bandwidth with a restart of the core on the days the data actually changes, which is seconds of dropped connections. Neither side dominates; this is the trade chosen deliberately, and the honest summary is that correctness won over disruption.
+
+Reported: [MHSanaei/3x-ui#6404](https://github.com/MHSanaei/3x-ui/pull/6404), the panel's own geofile download verified against the published digest — the geofile path was the last unverified download left in the panel, since the Xray binary is already checked against its `.dgst` sidecar; open. Retired by: verification reaching the core's own updater. The day it checks digests, this role hands the job over and the fleet gets hot reloads for free — the role's remaining value would be the conditional fetch alone, which is not worth a timer
+
