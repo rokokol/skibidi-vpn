@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Refresh the geo databases Xray routes by. The rules name categories, not
+# domains, so a database that stops being refreshed silently narrows what every
+# rule matches: the block list is only as current as the file underneath it.
+set -euo pipefail
+
+readonly data_dir={{ geodata_dir | quote }}
+readonly xray={{ geodata_xray | quote }}
+readonly live_config={{ geodata_live_config | quote }}
+readonly probe_config={{ geodata_probe_config | quote }}
+readonly files=({% for source in geodata_sources %}{{ source.local | quote }}{{ " " if not loop.last }}{% endfor %})
+
+# One run at a time. A second one would install files under the first one's feet
+exec 9>/run/xray-geodata-update.lock
+flock -n 9 || exit 0
+
+tmp=$(mktemp -d /tmp/xray-geodata-update.XXXXXX)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/new" "$tmp/previous"
+
+# Each release is verified inside a directory of its own: the .sha256sum file
+# names the release's own filename, and both upstreams publish a geosite.dat
+fetch() {
+  local base=$1 remote=$2 name=$3 dir="$tmp/download/$3"
+  mkdir -p "$dir"
+  curl --fail --silent --show-error --location --retry 3 \
+    --connect-timeout 15 --max-time 300 --output "$dir/$remote" "$base/$remote"
+  curl --fail --silent --show-error --location --retry 3 \
+    --connect-timeout 15 --max-time 30 --output "$dir/$remote.sha256sum" "$base/$remote.sha256sum"
+  (cd "$dir" && sha256sum --check --status "$remote.sha256sum")
+  cp "$dir/$remote" "$tmp/new/$name"
+}
+
+{% for source in geodata_sources %}
+fetch {{ source.base | quote }} {{ source.remote | quote }} {{ source.local | quote }}
+{% endfor %}
+
+changed=0
+for name in "${files[@]}"; do
+  cmp --silent "$tmp/new/$name" "$data_dir/$name" || changed=1
+done
+[ "$changed" -eq 1 ] || exit 0
+
+for name in "${files[@]}"; do
+  if [ -e "$data_dir/$name" ]; then
+    cp --preserve=mode,ownership,timestamps "$data_dir/$name" "$tmp/previous/$name"
+  fi
+done
+
+restore_previous() {
+  for name in "${files[@]}"; do
+    if [ -e "$tmp/previous/$name" ]; then
+      install -o root -g root -m 0644 "$tmp/previous/$name" "$data_dir/$name"
+    fi
+  done
+}
+
+for name in "${files[@]}"; do
+  install -o root -g root -m 0644 "$tmp/new/$name" "$data_dir/$name.new"
+  mv -f "$data_dir/$name.new" "$data_dir/$name"
+done
+
+# Two tests, because one of them cannot see half the files. The live config
+# proves the databases the rules actually name; the probe config names every
+# installed database directly, and Xray parses a database only when a rule
+# references it — without the second test a truncated file nobody routes by yet
+# is installed unread and surfaces days later
+if ! "$xray" run -test -c "$live_config" >/dev/null 2>&1 ||
+  ! XRAY_LOCATION_ASSET="$data_dir" "$xray" run -test -c "$probe_config" >/dev/null 2>&1; then
+  restore_previous
+  logger --tag xray-geodata-update --priority daemon.err "refused the new databases, kept the old ones"
+  exit 1
+fi
+
+systemctl restart x-ui
+
+# The panel outlives a config its core refuses, so `systemctl is-active x-ui`
+# answers the wrong question: it stays green while the tunnel is dead. Ask
+# after the core itself.
+#
+# By the binary each process was started from, not by its command line: the
+# panel starts the core from its own directory, so the core's argv reads
+# `bin/xray-linux-amd64` and any pgrep for the absolute path finds nothing and
+# rolls back a perfectly good update. `comm` is no better, being cut to fifteen
+# characters
+core_running() {
+  local exe
+  for exe in /proc/[0-9]*/exe; do
+    if [ "$(readlink -f "$exe" 2>/dev/null)" = "$xray" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+core=0
+for _ in $(seq 1 20); do
+  if core_running; then
+    core=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$core" -ne 1 ] || ! systemctl is-active --quiet x-ui; then
+  restore_previous
+  systemctl restart x-ui
+  logger --tag xray-geodata-update --priority daemon.err "the core did not come back, rolled the databases back"
+  exit 1
+fi
+
+logger --tag xray-geodata-update "refreshed ${files[*]}"

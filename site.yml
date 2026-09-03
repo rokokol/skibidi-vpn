@@ -9,6 +9,9 @@
     - tailscale
     - firewall
     - xui
+    # After the panel, which owns the directory the databases live in, and
+    # before the checker, which watches the timer this role installs
+    - geodata
     - fail2ban
     - role: certs
       when: certs_domain | default('') | length > 0

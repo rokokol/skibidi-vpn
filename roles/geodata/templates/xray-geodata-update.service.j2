@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Refresh the geo databases Xray routes by
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/xray-geodata-update
+# The download is bulk and the node is a router first
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Refresh the geo databases Xray routes by
+
+[Timer]
+OnCalendar={{ geodata_on_calendar }}
+# A node that was off through its window still refreshes when it comes back:
+# stale routing data is the failure, not a missed minute
+Persistent=true
+RandomizedDelaySec={{ geodata_randomized_delay }}
+AccuracySec=15min
+
+[Install]
+WantedBy=timers.target

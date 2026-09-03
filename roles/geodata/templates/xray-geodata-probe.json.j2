@@ -1,0 +1,25 @@
+{
+  "_comment": "{{ ansible_managed }} — never run, only fed to `xray run -test` so that every installed database is parsed",
+  "log": {"loglevel": "error"},
+  "inbounds": [
+    {
+      "tag": "probe",
+      "listen": "127.0.0.1",
+      "port": 62999,
+      "protocol": "dokodemo-door",
+      "settings": {"address": "127.0.0.1", "port": 9, "network": "tcp"}
+    }
+  ],
+  "outbounds": [{"tag": "blocked", "protocol": "blackhole"}],
+  "routing": {
+    "rules": [
+{% for source in geodata_sources %}
+{% if source.probe_domain is defined %}
+      {"type": "field", "outboundTag": "blocked", "domain": ["ext:{{ source.local }}:{{ source.probe_domain }}"]}{{ "," if not loop.last }}
+{% else %}
+      {"type": "field", "outboundTag": "blocked", "ip": ["ext:{{ source.local }}:{{ source.probe_ip }}"]}{{ "," if not loop.last }}
+{% endif %}
+{% endfor %}
+    ]
+  }
+}

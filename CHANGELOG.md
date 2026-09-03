@@ -4,6 +4,10 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+
+- `geodata`: the timer that refreshes the databases Xray routes by belongs to this repository now, instead of being a script somebody wrote on a node by hand, and it refreshes the Russian pair as well. `geoip_RU.dat` and `geosite_RU.dat` had stood at the day they were installed while every rule that reads a category went on matching a view of the runet that only narrowed. Each download is checked against the `sha256sum` its own release publishes, in a directory of its own because both upstreams call their file `geosite.dat` and only the local name tells them apart, and the four are installed together or not at all. The result is proved twice: against the config the core is running, and against a config that names every database directly — Xray parses a database only when a rule references it, so a truncated file nothing routes by yet is installed unread and surfaces days later. The rollback asks after the core rather than the panel, which stays up quite happily on a config its core refused
+
 ## [1.0.1] - 2026-09-03
 
 ### Fixed

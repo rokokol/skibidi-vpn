@@ -1,0 +1,94 @@
+---
+- name: Create the directory this node keeps its own configuration in
+  ansible.builtin.file:
+    path: /etc/skibidi
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Written as a file rather than generated inside the updater so that the
+# refresh and the deploy-time proof test exactly the same thing
+- name: Install the config that names every database directly
+  ansible.builtin.template:
+    src: xray-geodata-probe.json.j2
+    dest: "{{ geodata_probe_config }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the updater
+  ansible.builtin.template:
+    src: xray-geodata-update.j2
+    dest: /usr/local/sbin/xray-geodata-update
+    owner: root
+    group: root
+    mode: "0755"
+
+# The predecessor was written by hand before this role existed and refreshed
+# only the two stock databases. Leaving it would leave two updaters on the node
+# and no way to tell which one the unit runs
+- name: Remove the updater this role replaces
+  ansible.builtin.file:
+    path: /usr/local/sbin/xray-geodata-update.sh
+    state: absent
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - xray-geodata-update.service
+    - xray-geodata-update.timer
+  notify: Reload systemd
+
+- name: Apply the unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+# Skipped in check mode: the unit it enables is written by this same play, and
+# a dry run deliberately does not write it
+- name: Enable the timer
+  ansible.builtin.systemd_service:
+    name: xray-geodata-update.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Look for the databases the rules resolve against
+  ansible.builtin.stat:
+    path: "{{ geodata_dir }}/{{ item.local }}"
+  loop: "{{ geodata_sources }}"
+  loop_control:
+    label: "{{ item.local }}"
+  register: geodata_installed
+
+# A node the panel installed carries the stock pair and nothing else. Rather
+# than wait for tonight's timer with a database the rules already name missing,
+# fetch once, here, in front of someone
+- name: Fetch the databases when one of them is missing
+  ansible.builtin.systemd_service:
+    name: xray-geodata-update.service
+    state: started
+  when:
+    - not ansible_check_mode
+    - geodata_installed.results | rejectattr('stat.exists') | list | length > 0
+
+# Assert rather than trust: Xray parses a database only when a rule references
+# it, so an installed file proves nothing on its own. This forces every one of
+# them through the parser, and a truncated or half-written download fails the
+# deploy instead of narrowing what the rules match until somebody notices
+- name: Prove every database parses
+  ansible.builtin.command:
+    argv:
+      - "{{ geodata_xray }}"
+      - run
+      - -test
+      - -c
+      - "{{ geodata_probe_config }}"
+  environment:
+    XRAY_LOCATION_ASSET: "{{ geodata_dir }}"
+  changed_when: false
+  when: not ansible_check_mode
