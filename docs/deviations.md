@@ -61,3 +61,10 @@ Retired by: a vendor publishing a fingerprint out of band, at which point a down
 Renewal runs acme.sh's cron, and the reload command that has to restart the panel lives in acme.sh's per-domain conf, base64-wrapped between `__ACME_BASE64__START_` and `__ACME_BASE64__END_` markers. The role reads it back to decide whether `--install-cert` needs to run again, which is the only way a changed reload command reaches an existing certificate. A version of this that missed the markers decoded nothing, never matched, reinstalled the certificate on every deploy and restarted the panel each time
 
 Retired by: acme.sh exposing the recorded command through its CLI; until then the markers are part of the contract this role reads
+
+## Contributions upstream carry the trailer and nothing else
+
+The tooling that writes these commits appends a byline of its own to commit messages and pull request bodies, and from a web or Remote Control session a claude.ai session link with it. Neither belongs in somebody else's repository: a session link resolves for one account and is dead text to every other reader, and a "generated with" line in a pull request body says nothing the commit does not already say, to an audience that did not ask. What a reader can act on is the trailer — `Generated-by: Claude Code:<model>`, or `Assisted-by` where the project follows nixpkgs — and that is what the commits carry, upstream and here alike. `attribution.commit`, `attribution.pr` and `attribution.sessionUrl` are set in this machine's Claude Code settings so the omission is configuration rather than something somebody has to remember at the moment of writing
+
+Retired by: nothing. This is a convention, not a workaround: it stays as long as the defaults point the other way
+
