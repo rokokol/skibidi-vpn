@@ -20,8 +20,28 @@ tmp=$(mktemp -d /tmp/xray-geodata-update.XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/new" "$tmp/previous"
 
-# Each release is verified inside a directory of its own: the .sha256sum file
-# names the release's own filename, and both upstreams publish a geosite.dat
+# Compare the digest rather than handing the file to `sha256sum --check`: the
+# published sums file names the file as its own release built it, and the
+# upstreams disagree about that name — one writes `geoip.dat`, another
+# `release/geoip.dat`. Checking by name makes the verification fail on a
+# perfectly good download, which is a refusal for the wrong reason
+verify() {
+  local dir=$1 remote=$2 want got
+  want=$(awk -v name="$remote" '{ n = $2; sub(/^[*]/, "", n); sub(/^.*\//, "", n); if (n == name) { print $1; exit } }' "$dir/$remote.sha256sum")
+  if [ -z "$want" ]; then
+    echo "no digest for $remote in the published sha256sum file" >&2
+    return 1
+  fi
+  got=$(sha256sum "$dir/$remote" | cut -d" " -f1)
+  if [ "$want" != "$got" ]; then
+    echo "$remote from $3: digest $got does not match the published $want" >&2
+    return 1
+  fi
+}
+
+# Each release is downloaded into a directory of its own: every upstream calls
+# its files geoip.dat and geosite.dat, so one shared directory would have them
+# overwrite each other
 fetch() {
   local base=$1 remote=$2 name=$3 dir="$tmp/download/$3"
   mkdir -p "$dir"
@@ -29,7 +49,7 @@ fetch() {
     --connect-timeout 15 --max-time 300 --output "$dir/$remote" "$base/$remote"
   curl --fail --silent --show-error --location --retry 3 \
     --connect-timeout 15 --max-time 30 --output "$dir/$remote.sha256sum" "$base/$remote.sha256sum"
-  (cd "$dir" && sha256sum --check --status "$remote.sha256sum")
+  verify "$dir" "$remote" "$base"
   cp "$dir/$remote" "$tmp/new/$name"
 }
 

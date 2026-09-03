@@ -13,9 +13,9 @@ geodata_probe_config: /etc/skibidi/xray-geodata-probe.json
 # One entry per database.
 #
 # `remote` is the filename the release publishes, which is also the name written
-# inside its .sha256sum file. Both upstreams call their files geoip.dat and
-# geosite.dat, and only `local` tells the RU build apart from the stock one, so
-# each download is verified in a directory of its own.
+# inside its .sha256sum file. Every upstream here calls its files geoip.dat and
+# geosite.dat, and only `local` tells the builds apart, so each download is
+# verified in a directory of its own.
 #
 # `probe_ip` / `probe_domain` name a category the database must carry. Xray
 # parses a database only when a rule references it, so one that no rule names
@@ -38,6 +38,14 @@ geodata_sources:
     remote: geosite.dat
     base: https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download
     probe_domain: category-ru
+  - local: geoip_IR.dat
+    remote: geoip.dat
+    base: https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download
+    probe_ip: ir
+  - local: geosite_IR.dat
+    remote: geosite.dat
+    base: https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download
+    probe_domain: category-ir
 
 # Daily, scattered across two hours: the whole fleet asking one origin for the
 # same release on the same minute is a herd, and the data is a day-grain thing
