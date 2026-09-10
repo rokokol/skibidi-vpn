@@ -49,6 +49,10 @@ jobs:
 
       # An unpinned lookup makes a job change behavior with zero change in the
       # repo; every tool here comes from the flake's own lock
+      # Every vendored copy is byte-equal to its source: one edited here instead of at the
+      # source fails by name — see .github/vendor.lock
+      - name: vendored copies are byte-equal to their source
+        run: ./vendor-sync.sh check
       - name: CI tools come from the lock, not the registry
         run: ./check-pins.sh
 
