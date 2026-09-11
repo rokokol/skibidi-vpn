@@ -11,6 +11,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ### Changed
 
 - the repository-wide deviation record moved from `docs/deviations.md` to the conventional root `DEVIATIONS.md` and is linked from a header badge
+- the workaround entries left `DEVIATIONS.md` for their own conventional root `WORKAROUNDS.md`, so a reader no longer has to guess which upstream gap forced what: the six that exist only because upstream is missing or broken something now sit beside the report that would retire them, and `DEVIATIONS.md` keeps only the deliberate choices, pinned security practices and the two jails that warn nobody
 
 ## [1.0.1] - 2026-09-03
 
