@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
       - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-flake-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
@@ -56,7 +56,7 @@ jobs:
       - name: CI tools come from the lock, not the registry
         run: ./check-pins.sh
 
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
       - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
