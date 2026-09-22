@@ -69,9 +69,9 @@
       {{ tailscale_auth_key | length > 0
          and (tailscale_status.stdout | default('{}') | from_json).BackendState | default('') != 'Running' }}
 
-# Through a file, not an argument: an argument sits in /proc/<pid>/cmdline for
-# every process on the node while the join runs, and no_log only hides it
-# from Ansible's own output. /run is memory, so nothing lands on disk
+# Through a file, not an argument, and /run is memory so nothing lands on disk. What an
+# argument exposes while the join runs is in DEVIATIONS.md, "The Tailscale auth key
+# travels through a file in /run"
 - name: Hand the key over in a file only root can read
   ansible.builtin.copy:
     dest: /run/tailscale-authkey
