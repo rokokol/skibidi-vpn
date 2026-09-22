@@ -16,7 +16,7 @@
     system: true
 
 # /bin/sh, not nologin: sshd runs a forced command through the account's login
-# shell, so nologin silently kills the export itself — the fleet answered
+# shell, so nologin silently kills the export itself — a node with nologin answers
 # "This account is currently not available" instead of metrics. Login stays
 # impossible anyway: the password is locked and the only key is chained to the
 # guard by restrict,command=

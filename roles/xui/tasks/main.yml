@@ -64,13 +64,10 @@
     mode: "0700"
   when: xui_install_pending
 
-# The installer's unattended contract, documented in upstream's deploy/:
-# XUI_NONINTERACTIVE=1 turns every prompt into an env lookup or a default,
-# and the port and base path are handed in so a fresh node comes up where
-# the registry says rather than on a random port first. stdin comes from
-# /dev/null for the reason DEVIATIONS.md gives under "The panel installer
-# runs with no terminal on purpose". The listen address has no knob and is
-# set by the role below
+# The unattended contract upstream documents under deploy/, so a fresh node
+# comes up where the registry says rather than on a random port first.
+# DEVIATIONS.md, "The panel installer runs with no terminal on purpose", has
+# why stdin is /dev/null and why the listen address waits for the role
 - name: Install 3x-ui
   ansible.builtin.shell:
     cmd: /bin/bash /root/x-ui-install-{{ xui_installer_commit }}.sh v{{ xui_version }} </dev/null

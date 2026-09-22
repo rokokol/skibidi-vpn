@@ -3,7 +3,7 @@
 # /etc/fail2ban/filter.d/3x-ipl.conf and action.d/3x-ipl.conf itself, so a role
 # that runs before the panel is installed has its work overwritten the moment
 # the installer runs - visible only as a second play that keeps finding the same
-# work to do. Ours goes last and stays, and the difference is deliberate: the
+# work to do. This role goes last and stays, and the difference is deliberate: the
 # panel's ban spares SSH and its own port, while this one closes everything by
 # default - administration arrives over the tunnel, which is never banned, so
 # an exception would only leave a banned client a way in.
@@ -86,7 +86,7 @@
   notify: Restart fail2ban
 
 # The panel writes its own jail file declaring the same jail. Two declarations
-# are resolved by filename order, which happens to favour ours and reads as an
+# are resolved by filename order, which happens to favour this role's and reads as an
 # accident - so the panel's is removed and this role's file is the only place
 # the jail is defined. The panel recreates it if its menu is used again, and the
 # next play takes it back

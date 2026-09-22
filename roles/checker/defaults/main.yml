@@ -10,10 +10,8 @@ checker_interval: 30min
 checker_alert_to: "{{ alert_to | default('') }}"
 checker_smtp: "{{ smtp | default('') }}"
 
-# The letters name every client and every node, so they never cross the internet in
-# clear. Why a tunnel intake is the one place this is switched off is in DEVIATIONS.md,
-# "The mail path leaves the tunnel, over TLS". The checker holds the invariant: TLS off
-# is only ever accepted for an address inside metrics_tunnel_ranges
+# False is accepted for an intake on the tunnel and nowhere else, and the checker is
+# what holds that. DEVIATIONS.md, "The mail path leaves the tunnel, over TLS", has why
 checker_smtp_tls: true
 
 # The panel this node is driven by, if any. A node knows its own master - that

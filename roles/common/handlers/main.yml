@@ -5,7 +5,7 @@
     state: restarted
 
 # --system rather than -p: the point is to read every drop-in in order, so a
-# stale file that outranks ours shows up here rather than after the next reboot
+# stale file that outranks this one shows up here rather than after the next reboot
 - name: Apply sysctl settings
   ansible.builtin.command:
     argv: [sysctl, --system]

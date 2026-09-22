@@ -3,8 +3,8 @@
 #
 # This scenario registers with Cloudflare, which creates account state on their
 # side and needs the internet from inside the VM. A check that depends on
-# somebody else's service goes red when they have an outage rather than when we
-# have a bug, so it must not gate anything - and it must not run unattended,
+# somebody else's service goes red on their outage rather than on a bug in this
+# repository, so it must not gate anything - and it must not run unattended,
 # because every run leaves a registration behind.
 driver:
   name: default
