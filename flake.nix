@@ -16,9 +16,11 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       ddlc-themes,
+      # The caller always passes self, so a list without `...` has to name it, and naming
+      # what nothing reads is what deadnix objects to. `...` accepts it and reads nothing
+      ...
     }:
     let
       systems = [
