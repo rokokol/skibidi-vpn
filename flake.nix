@@ -15,13 +15,27 @@
   };
 
   outputs =
-    { self, nixpkgs, ddlc-themes }:
+    {
+      self,
+      nixpkgs,
+      ddlc-themes,
+    }:
     let
       systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      # Each piece isolated, so an edit to a role or a document rebuilds nothing
+      noSecrets = builtins.path {
+        name = "no-secrets.sh";
+        path = ./tests/no-secrets.sh;
+      };
+      falsifySecrets = builtins.path {
+        name = "falsify-secrets.sh";
+        path = ./tests/falsify-secrets.sh;
+      };
     in
     {
       devShells = forAll (pkgs: {
@@ -80,7 +94,12 @@
             # matplotlib because the report tests render real charts; the cid
             # round trip proves nothing if no chart was ever attached. jinja2
             # because the config template's promises are themselves under test
-            (python3.withPackages (ps: with ps; [ matplotlib jinja2 ]))
+            (python3.withPackages (
+              ps: with ps; [
+                matplotlib
+                jinja2
+              ]
+            ))
           ];
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
           SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
@@ -89,11 +108,16 @@
       });
 
       checks = forAll (pkgs: {
-        # Everything that needs no network and no VM, so it can gate a push
-        lint = pkgs.runCommand "skibidi-vpn-lint" { buildInputs = [ pkgs.shellcheck ]; } ''
-          shellcheck ${self}/tests/no-secrets.sh ${self}/tests/falsify-secrets.sh
+        # Everything that needs no network and no VM, so it can gate a push.
+        # The two scripts isolated rather than reached for through ${self}: that ties the
+        # check to the whole repository, so every commit gives it a new hash and rebuilds it
+        lint = pkgs.runCommand "skibidi-vpn-lint" { buildInputs = with pkgs; [ shellcheck ]; } ''
+          shellcheck ${noSecrets} ${falsifySecrets}
           touch $out
         '';
       });
+
+      # Without this output `nix fmt` does nothing here and a gate has nothing to run
+      formatter = forAll (pkgs: pkgs.nixfmt-tree);
     };
 }
