@@ -4,13 +4,13 @@ Things in these roles that exist only because upstream is missing or broken some
 
 ---
 
-## Xray is held at 26.7.11
+## Xray is held at a pinned release
 
 **Where:** the Xray tasks in `roles/xui/tasks/main.yml`, after the panel installer, with the version and both digests in `roles/xui/defaults/main.yml`; on every node
 
-**Symptom it prevents:** with the Xray-core 26.9.9 that 3x-ui 3.8.5 bundles, the clients stop connecting. The master logs every attempt as `REALITY: processed invalid connection from …: authentication failed or validation criteria not met`, and the VPN is down for everyone until the core goes back
+**Symptom it prevents:** with the core the pinned panel release bundles, the clients stop connecting. The master logs every attempt as `REALITY: processed invalid connection from …: authentication failed or validation criteria not met`, and the VPN is down for everyone until the core goes back
 
-**Why it happens:** observed, not yet traced: the same clients and the same inbounds connect again as soon as 26.7.11 runs, so the break is between those two cores. The release notes of 26.9.8 and 26.9.9 name no REALITY change
+**Why it happens:** observed, not yet traced: the same clients and the same inbounds connect again as soon as the held core runs, so the break lies between the two cores. The bundled core's release notes name no REALITY change
 
 **Why this works:** the role reads the digest of the core the panel runs. When it is not the pinned one, it fetches the official `Xray-linux-64.zip`, checked against the digest the release publishes, puts the `xray` inside in place and restarts the panel. It runs after the installer, because an install or an upgrade puts the bundled core back
 
@@ -20,7 +20,7 @@ Things in these roles that exist only because upstream is missing or broken some
 journalctl -u x-ui --since "-10min" | grep -c 'REALITY: processed invalid connection'
 ```
 
-Run it on the node after switching its core from the panel's UI and connecting a client of every app in use. Non-zero -> put 26.7.11 back and keep the pin. Zero, and every client connects -> raise `xui_xray_version` to that core, or drop these tasks when the panel release bundles a core that passes
+Run it on the node after switching its core from the panel's UI and connecting a client of every app in use. Non-zero -> put the held core back and keep the pin. Zero, and every client connects -> raise `xui_xray_version` to that core, or drop these tasks when the panel release bundles a core that passes
 
 **Upstream:** not reported yet; the cause is not narrowed down enough to report
 

@@ -15,7 +15,7 @@ xui_installer_sha256: 4e3fe7fe00ef8e904ce6a0e9c36fd8a0c7179fe5e786f23e31801aee84
 xui_binary_sha256: 816420f7a6df3eb3272c3608767207b1ade81c3dcb7fed7b46c7949454a8a14c
 
 # The Xray core held below the one the panel release bundles. WORKAROUNDS.md has why and
-# when it can go, under "Xray is held at 26.7.11". The archive digest is the SHA2-256 the
+# when it can go, under "Xray is held at a pinned release". The archive digest is the SHA2-256 the
 # release publishes in its .dgst file; the binary digest is the xray inside it
 xui_xray_version: "26.7.11"
 xui_xray_zip_sha256: aa11c3685c71da0ffc71e511db50404609e7e963bb914b048f59a6a00af8930e

@@ -106,7 +106,7 @@
   when: not ansible_check_mode or xui_binary.stat.exists
 
 # After the installer, because an install or upgrade puts the core the panel release
-# bundles back in place. WORKAROUNDS.md, "Xray is held at 26.7.11", has why
+# bundles back in place. WORKAROUNDS.md, "Xray is held at a pinned release", has why
 - name: Read the digest of the Xray core
   ansible.builtin.stat:
     path: "{{ xui_xray_path }}"

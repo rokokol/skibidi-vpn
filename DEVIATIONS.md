@@ -18,7 +18,7 @@ Things in these roles that read as workarounds and are not: permanent choices th
 
 **Where:** the binary digest check in `roles/xui/tasks/main.yml`, with the digest in `roles/xui/defaults/main.yml`
 
-**Why it differs from the obvious route:** the installer already checks the release tarball against the digest the release publishes, so a second pin looks redundant. The role pins what comes out, the sha256 of `/usr/local/x-ui/x-ui`, on every run rather than only after an install: the pin is a statement about the node, not about a download. The Xray core beside it is held for a different reason, which `WORKAROUNDS.md` records under "Xray is held at 26.7.11"
+**Why it differs from the obvious route:** the installer already checks the release tarball against the digest the release publishes, so a second pin looks redundant. The role pins what comes out, the sha256 of `/usr/local/x-ui/x-ui`, on every run rather than only after an install: the pin is a statement about the node, not about a download. The Xray core beside it is held for a different reason, which `WORKAROUNDS.md` records under "Xray is held at a pinned release"
 
 **What returning to the obvious route breaks:** a panel updated from its own menu goes unnoticed, and a node and its master drift apart in version, which node mode does not survive. A tarball the release itself replaced would also pass the installer's check, because the digest beside it is replaced with it
 

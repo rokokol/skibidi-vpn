@@ -42,7 +42,7 @@ molecule test                # real Ubuntu VM under KVM
 
 ## Upgrades
 
-- **A new Xray core reaches one node before the fleet, and a real client proves it.** A panel release can bundle a new core, and release notes do not name every break: 3x-ui 3.8.5 brought Xray 26.9.9, whose REALITY refused every existing client and took the VPN down. Switch the core on one node, connect a client of every app in use, and read the node's log for `REALITY: processed invalid connection` before the playbook runs everywhere. `WORKAROUNDS.md`, "Xray is held at 26.7.11", has the check
+- **A new Xray core reaches one node before the fleet, and a real client proves it.** A panel release can bundle a new core, release notes do not name every break, and a core that refuses existing clients takes the VPN down for everyone. Switch the core on one node, connect a client of every app in use, and read the node's log for refused handshakes before the playbook runs everywhere. `WORKAROUNDS.md`, "Xray is held at a pinned release", has the check
 - **The panel itself cannot go ahead alone.** A node and its master must run the same panel version for node mode, so a panel upgrade goes to the fleet at once; the core it bundles is what the one-node step tests, and the role's Xray pin keeps it from arriving untested
 
 ## Releases
