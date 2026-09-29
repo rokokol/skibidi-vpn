@@ -14,6 +14,14 @@ xui_installer_sha256: 4e3fe7fe00ef8e904ce6a0e9c36fd8a0c7179fe5e786f23e31801aee84
 # what it catches, under "The panel binary is pinned on the way out"
 xui_binary_sha256: 816420f7a6df3eb3272c3608767207b1ade81c3dcb7fed7b46c7949454a8a14c
 
+# The Xray core held below the one the panel release bundles. WORKAROUNDS.md has why and
+# when it can go, under "Xray is held at 26.7.11". The archive digest is the SHA2-256 the
+# release publishes in its .dgst file; the binary digest is the xray inside it
+xui_xray_version: "26.7.11"
+xui_xray_zip_sha256: aa11c3685c71da0ffc71e511db50404609e7e963bb914b048f59a6a00af8930e
+xui_xray_sha256: 5200ed9b358cf380b2d9f1fe28c7e56220c0159adcd86a64592246d8257a043c
+xui_xray_path: /usr/local/x-ui/bin/xray-linux-amd64
+
 xui_db: /etc/x-ui/x-ui.db
 
 # The panel answers on the tunnel address only; set per node from its own file

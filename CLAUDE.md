@@ -40,6 +40,11 @@ molecule test                # real Ubuntu VM under KVM
 - Assert the result rather than trusting the module: the `xui` role proves with `ss` that the panel listens only on the tunnel address, because a panel on a public address exposes every client secret
 - Never print a full inbound or the Xray template — they carry client UUIDs, subscription ids and Reality private keys
 
+## Upgrades
+
+- **A new Xray core reaches one node before the fleet, and a real client proves it.** A panel release can bundle a new core, and release notes do not name every break: 3x-ui 3.8.5 brought Xray 26.9.9, whose REALITY refused every existing client and took the VPN down. Switch the core on one node, connect a client of every app in use, and read the node's log for `REALITY: processed invalid connection` before the playbook runs everywhere. `WORKAROUNDS.md`, "Xray is held at 26.7.11", has the check
+- **The panel itself cannot go ahead alone.** A node and its master must run the same panel version for node mode, so a panel upgrade goes to the fleet at once; the core it bundles is what the one-node step tests, and the role's Xray pin keeps it from arriving untested
+
 ## Releases
 
 Every user-visible change gets a line under `## [Unreleased]` in `CHANGELOG.md`; a release moves them under a version, tags `v<x.y.z>` and cuts a `gh release`.

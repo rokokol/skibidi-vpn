@@ -1,7 +1,7 @@
 ---
 - name: Install the packages the panel and our checks need
   ansible.builtin.apt:
-    name: [curl, sqlite3, tar]
+    name: [curl, sqlite3, tar, unzip]
     state: present
     update_cache: true
     # Refresh only if no other role did it in the last hour: five roles each
@@ -104,6 +104,82 @@
       not the {{ xui_binary_sha256 }} of release v{{ xui_version }}; the panel on
       this node is not the one this repository pins
   when: not ansible_check_mode or xui_binary.stat.exists
+
+# After the installer, because an install or upgrade puts the core the panel release
+# bundles back in place. WORKAROUNDS.md, "Xray is held at 26.7.11", has why
+- name: Read the digest of the Xray core
+  ansible.builtin.stat:
+    path: "{{ xui_xray_path }}"
+    checksum_algorithm: sha256
+  register: xui_xray
+
+- name: Note whether the Xray core has to be replaced
+  ansible.builtin.set_fact:
+    xui_xray_pending: "{{ xui_xray.stat.checksum | default('') != xui_xray_sha256 }}"
+
+- name: Fetch the pinned Xray release
+  ansible.builtin.get_url:
+    url: https://github.com/XTLS/Xray-core/releases/download/v{{ xui_xray_version }}/Xray-linux-64.zip
+    dest: /root/xray-{{ xui_xray_version }}.zip
+    checksum: sha256:{{ xui_xray_zip_sha256 }}
+    owner: root
+    group: root
+    mode: "0600"
+  when: xui_xray_pending
+
+- name: Make a directory to unpack the release into
+  ansible.builtin.file:
+    path: /root/xray-{{ xui_xray_version }}
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: xui_xray_pending
+
+- name: Unpack the pinned Xray release
+  ansible.builtin.unarchive:
+    src: /root/xray-{{ xui_xray_version }}.zip
+    dest: /root/xray-{{ xui_xray_version }}
+    remote_src: true
+    include: [xray]
+  when: xui_xray_pending and not ansible_check_mode
+
+- name: Put the pinned Xray core where the panel runs it
+  ansible.builtin.copy:
+    src: /root/xray-{{ xui_xray_version }}/xray
+    dest: "{{ xui_xray_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: xui_xray_pending and not ansible_check_mode
+  notify: Restart x-ui
+
+- name: Read the digest of the Xray core again
+  ansible.builtin.stat:
+    path: "{{ xui_xray_path }}"
+    checksum_algorithm: sha256
+  register: xui_xray_now
+  when: not ansible_check_mode
+
+- name: The Xray core is the one this repository holds
+  ansible.builtin.assert:
+    that:
+      - xui_xray_now.stat.exists
+      - xui_xray_now.stat.checksum == xui_xray_sha256
+    fail_msg: >-
+      {{ xui_xray_path }} has digest {{ xui_xray_now.stat.checksum | default('none') }},
+      not the {{ xui_xray_sha256 }} of Xray v{{ xui_xray_version }}
+  when: not ansible_check_mode
+
+- name: Remove the unpacked release
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /root/xray-{{ xui_xray_version }}.zip
+    - /root/xray-{{ xui_xray_version }}
+  when: xui_xray_pending and not ansible_check_mode
 
 # Read before write. The settings command below cannot report whether it changed
 # anything, so asking the database first is what separates "nothing to do" from
