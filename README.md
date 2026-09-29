@@ -73,7 +73,7 @@ The molecule workflow is dispatch-only, so its badge shows no status until a run
 
 - The `sub` capability is declared on the master and read by nothing yet. It is reserved for the day subscriptions are served through Clash: the node carrying it will get the subscription port opened to the CDN's ranges alone, with `firewall_tcp_open_from`, and the checker will hold that port to those sources
 
-Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEVIATIONS.md), with what would reconsider it; the gaps that force a workaround at all are in [`WORKAROUNDS.md`](WORKAROUNDS.md), with what would retire each
+Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEVIATIONS.md), with the trade behind it; the gaps that force a workaround at all are in [`WORKAROUNDS.md`](WORKAROUNDS.md), with what would retire each
 
 ## Roles
 
