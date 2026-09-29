@@ -84,22 +84,9 @@
     state: absent
   when: xui_install_pending
 
-# The pinned management script goes back on top, and get_url compares the
-# digest, so this is a no-op on every run where it already matches. What the
-# installer does instead is in WORKAROUNDS.md, "The panel installer is run,
-# not replaced"
-- name: Put the pinned management script where the panel's menu runs it
-  ansible.builtin.get_url:
-    url: https://raw.githubusercontent.com/MHSanaei/3x-ui/{{ xui_installer_commit }}/x-ui.sh
-    dest: /usr/bin/x-ui
-    checksum: sha256:{{ xui_script_sha256 }}
-    owner: root
-    group: root
-    mode: "0755"
-
 # Checked on what the installer produced rather than on what it downloaded,
 # and always, not only after an install: the pin is a statement about the
-# node. WORKAROUNDS.md has the rest, under "The panel binary is pinned on
+# node. DEVIATIONS.md has the rest, under "The panel binary is pinned on
 # the way out"
 - name: Read the digest of the panel binary
   ansible.builtin.stat:
@@ -117,35 +104,6 @@
       not the {{ xui_binary_sha256 }} of release v{{ xui_version }}; the panel on
       this node is not the one this repository pins
   when: not ansible_check_mode or xui_binary.stat.exists
-
-# The panel runs as root and reads nothing through another account, so root
-# alone is the only mode that costs nothing. What it leaves open otherwise is
-# in WORKAROUNDS.md, "The panel's database is closed by the role, after the
-# panel opened it"
-- name: Keep the panel's directory closed to everyone but root
-  ansible.builtin.file:
-    path: "{{ xui_db | dirname }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
-
-- name: Find the database, its journal and its copies
-  ansible.builtin.find:
-    paths: "{{ xui_db | dirname }}"
-    patterns: "{{ xui_db | basename }}*"
-    file_type: file
-  register: xui_db_files
-
-- name: Keep every one of them readable by root alone
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    owner: root
-    group: root
-    mode: "0600"
-  loop: "{{ xui_db_files.files }}"
-  loop_control:
-    label: "{{ item.path }}"
 
 # Read before write. The settings command below cannot report whether it changed
 # anything, so asking the database first is what separates "nothing to do" from

@@ -10,6 +10,8 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Changed
 
+- `xui` installs and pins 3x-ui 3.8.5, which bundles Xray-core 26.9.9. The release's own "Action required" notes apply on upgrade: a hysteria2 outbound stored with `udpHop` has to be re-imported, and a save or enable whose ports collide is now refused
+- `xui` no longer puts a pinned `x-ui.sh` back after the installer, because the installer now fetches the script from the installed tag, and no longer tightens the permissions of `/etc/x-ui`, because the panel now keeps its store owner-only itself. The checker still turns red on anything looser
 - the repository-wide deviation record moved from `docs/deviations.md` to the conventional root `DEVIATIONS.md` and is linked from a header badge
 - the workaround entries left `DEVIATIONS.md` for their own conventional root `WORKAROUNDS.md`, so a reader no longer has to guess which upstream gap forced what: the six that exist only because upstream is missing or broken something now sit beside the report that would retire them, and `DEVIATIONS.md` keeps only the deliberate choices, pinned security practices and the two jails that warn nobody
 

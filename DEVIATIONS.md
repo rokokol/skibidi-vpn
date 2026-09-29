@@ -4,6 +4,26 @@ Things in these roles that read as workarounds and are not: permanent choices th
 
 ---
 
+## The panel installer is run, not replaced, and pinned by digest
+
+**Where:** the installer tasks in `roles/xui/tasks/main.yml`, with the commit and the digest in `roles/xui/defaults/main.yml`
+
+**Why it differs from the obvious route:** the obvious route for Ansible is to replace a vendor's installer with tasks. `install.sh` does more than download: it installs the panel's dependencies, lays out the binary and the unit for the distribution, generates the first credentials and base path, runs `x-ui migrate` and writes the fail2ban files. Replacing it would mean carrying a copy of it and chasing every release. So the role fetches it at the commit the release tag points to, checks its sha256 before bash sees it, and runs it from disk
+
+**What returning to the obvious route breaks:** a copy of the installer in tasks drifts from the release it installs, and the first release that adds a step leaves every node without it
+
+---
+
+## The panel binary is pinned on the way out
+
+**Where:** the binary digest check in `roles/xui/tasks/main.yml`, with the digest in `roles/xui/defaults/main.yml`
+
+**Why it differs from the obvious route:** the installer already checks the release tarball against the digest the release publishes, so a second pin looks redundant. The role pins what comes out, the sha256 of `/usr/local/x-ui/x-ui`, on every run rather than only after an install: the pin is a statement about the node, not about a download. The Xray binary beside it is deliberately not pinned: the panel is allowed to switch cores from its own UI, and that is the panel's domain
+
+**What returning to the obvious route breaks:** a panel updated from its own menu goes unnoticed, and a node and its master drift apart in version, which node mode does not survive. A tarball the release itself replaced would also pass the installer's check, because the digest beside it is replaced with it
+
+---
+
 ## The file-reading jails say `backend = auto` themselves
 
 **Where:** `[3x-ipl]` and `[recidive]` in `roles/fail2ban/templates/jail.local.j2`, and the `fail2ban-client get <jail> logpath` checks in the role, the checker and the VM test
