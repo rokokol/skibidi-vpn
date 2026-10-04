@@ -42,6 +42,16 @@ common_conntrack_established_timeout: 86400
 # over IPv4 has two reputations, and only one of them was ever checked
 common_prefer_ipv4: true
 
+# The system resolver, in the order it is tried. Xray resolves through it, so
+# this list decides which third party sees every name a client asks for. The
+# second server is a fallback and is asked only when the first does not answer
+common_dns_servers:
+  - 9.9.9.9
+  - 1.1.1.1
+common_resolv_conf: /etc/resolv.conf
+# False leaves the node's own resolver untouched; set it per node in the node file
+common_manage_resolver: true
+
 # systemd's own default is 1024 soft. The panel is a Go program and raises its
 # own soft limit at startup, which is why nothing has bitten yet; anything else
 # on the box does not

@@ -1,0 +1,23 @@
+---
+# A node's resolver is chosen here and nowhere else. A node may hold a plain file
+# nothing maintains (no systemd-resolved, so the netplan nameservers never reach
+# it) or a symlink into systemd-resolved's runtime directory whose upstream is
+# the cloud's DHCP answer. One static file serves both. Resolved's own
+# documentation names replacing the symlink as the way to manage the file
+# differently, and tmpfiles (`L!`) does not put the symlink back over a file
+#
+# A node opts out with common_manage_resolver = false in its node file, and then
+# keeps whatever resolver its cloud gave it. A node in a country that inspects
+# traffic needs that: plain UDP 53 to a foreign resolver crosses the censor's
+# DPI, while the cloud resolver stays inside the provider's network, and the
+# node must resolve its upstream's name through that to bring the tunnel up
+#
+# follow is off on purpose: a write through the symlink lands in /run, which the
+# next boot empties, and the node silently returns to the DHCP resolver
+- name: Point the system resolver at the declared servers
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: "{{ common_resolv_conf }}"
+    mode: "0644"
+    follow: false
+  when: common_manage_resolver

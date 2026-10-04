@@ -39,5 +39,10 @@ smtp = "mail.example.org:25025"
 # checker holds it to. Not defaulted from the panel's listen address on purpose
 metrics_host = "100.72.0.4"
 
+# The common role points the system resolver at Quad9 and Cloudflare. A node that
+# must keep the resolver its cloud gave it, because foreign DNS does not reach
+# from where it sits, opts out here
+# common_manage_resolver = false
+
 # Secrets never live in this file. tailscale_auth_key and certs_cf_token come
 # from vault.yml, passed with -e; see vault.example.yml

@@ -76,6 +76,9 @@
     mode: "0644"
   when: common_prefer_ipv4
 
+- name: Declare the system resolver
+  ansible.builtin.import_tasks: dns.yml
+
 - name: Make room for the panel's unit drop-in
   ansible.builtin.file:
     path: /etc/systemd/system/x-ui.service.d

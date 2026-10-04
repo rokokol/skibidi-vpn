@@ -33,6 +33,33 @@
           sysctl reports {{ verify_sysctl.results[0].stdout }}/{{ verify_sysctl.results[1].stdout }};
           a setting written to a file the module never applied looks identical in the diff
 
+    # The file a resolver library reads, not the role's variable: a symlink into
+    # /run would still show the servers until the next boot
+    - name: Read the resolver file and what it is
+      ansible.builtin.stat:
+        path: "{{ common_resolv_conf }}"
+        follow: false
+      register: verify_resolv_stat
+      when: common_manage_resolver
+
+    - name: Read the servers the resolver library will ask
+      ansible.builtin.slurp:
+        src: "{{ common_resolv_conf }}"
+      register: verify_resolv
+      when: common_manage_resolver
+
+    - name: The resolver is a plain file that lists the declared servers in order
+      when: common_manage_resolver
+      ansible.builtin.assert:
+        that:
+          - not verify_resolv_stat.stat.islnk
+          - >-
+            (verify_resolv.content | b64decode).splitlines()
+            | select('match', '^nameserver ')
+            | map('regex_replace', '^nameserver ', '')
+            | list == common_dns_servers
+        fail_msg: "resolver is {{ verify_resolv.content | b64decode | trim }}, a link: {{ verify_resolv_stat.stat.islnk }}"
+
     - name: Read the listening sockets
       ansible.builtin.command: ss -ltnH
       register: verify_sockets

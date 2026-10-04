@@ -10,6 +10,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Changed
 
+- `common` sets the system resolver to Quad9 `9.9.9.9`, with Cloudflare `1.1.1.1` as the only fallback, from `common_dns_servers`. Xray resolves through it, so this decides which third party sees every name a client asks for. The role writes `/etc/resolv.conf` as a plain file and replaces the symlink into systemd-resolved where there is one, so the cloud's DHCP resolver and its search domains no longer apply. A node that had Google DNS in that file loses it on the next deploy. `common_manage_resolver = false` in a node file leaves that node's own resolver alone: a node in a country that inspects traffic may need the cloud resolver, because plain UDP 53 to a foreign resolver crosses the censor's DPI
 - `xui` installs and pins 3x-ui 3.8.5, which bundles Xray-core 26.9.9. The release's own "Action required" notes apply on upgrade: a hysteria2 outbound stored with `udpHop` has to be re-imported, and a save or enable whose ports collide is now refused
 - `xui` holds Xray-core at 26.7.11 in place of the 26.9.9 that 3x-ui 3.8.5 bundles, because clients could not connect through REALITY on 26.9.9
 - `xui` no longer puts a pinned `x-ui.sh` back after the installer, because the installer now fetches the script from the installed tag, and no longer tightens the permissions of `/etc/x-ui`, because the panel now keeps its store owner-only itself. The checker still turns red on anything looser
