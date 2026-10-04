@@ -21,12 +21,12 @@ sendmail = "{{ reporter_sendmail }}"
 [metrics]
 port = {{ metrics_api_port }}
 
-{% for host in ([inventory_hostname] + groups['nodes'] | default([])) | unique | sort %}
 # metrics_host is the registry's own word for where the pull goes — a tailnet
 # address, which the checker holds it to. Deliberately not defaulted from the
 # panel's listen address: the two are different decisions, and a node that has
 # not declared one fails the deploy rather than silently borrowing the panel's.
 # The master is in the list too: it reads its own store through its own API
+{% for host in ([inventory_hostname] + groups['nodes'] | default([])) | unique | sort %}
 [[nodes]]
 name = "{{ host }}"
 host = "{{ hostvars[host].metrics_host }}"
