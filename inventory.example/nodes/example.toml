@@ -35,9 +35,17 @@ certs_email = "admin@example.org"
 alert_to = "vpn@example.org"
 smtp = "mail.example.org:25025"
 
-# Where the master pulls this node's metrics from: a tunnel address, which the
-# checker holds it to. Not defaulted from the panel's listen address on purpose
+# Where this node's metrics API answers, docs/metrics-api.md: a tunnel address,
+# which the checker holds it to. Every node declares one, the master too,
+# because the letter reads the master's own store through it. Not defaulted
+# from the panel's listen address on purpose
 metrics_host = "100.72.0.4"
+
+# Tailscale SSH takes port 22 on the tailnet address; sshd keeps the public
+# address as the way in when the tailnet is down. The tailnet's ACL must have
+# an ssh rule that lets the operator in as ansible_user first, or SSH over the
+# tailnet, and every deploy that goes that way, is refused
+# tailscale_ssh = true
 
 # The common role points the system resolver at Quad9 and Cloudflare. A node that
 # must keep the resolver its cloud gave it, because foreign DNS does not reach

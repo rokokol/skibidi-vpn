@@ -1,5 +1,5 @@
 ---
-- name: Install the collector
+- name: Install the collector and the API
   ansible.builtin.copy:
     src: skibidi-metrics.py
     dest: /usr/local/sbin/skibidi-metrics
@@ -7,28 +7,16 @@
     group: root
     mode: "0755"
 
-# Collection needs root; reading the finished store does not. The export runs
-# as this account so that a bypassed guard is an account that can read one
-# file, not a root shell
-- name: Create the export group
-  ansible.builtin.group:
-    name: "{{ metrics_export_user }}"
-    system: true
+- name: Remove the SSH export the API replaced
+  ansible.builtin.import_tasks: legacy-ssh-export.yml
 
-# /bin/sh, not nologin: sshd runs a forced command through the account's login
-# shell, so nologin silently kills the export itself — a node with nologin answers
-# "This account is currently not available" instead of metrics. Login stays
-# impossible anyway: the password is locked and the only key is chained to the
-# guard by restrict,command=
-- name: Create the export account
-  ansible.builtin.user:
-    name: "{{ metrics_export_user }}"
-    group: "{{ metrics_export_user }}"
+# Collection needs root; reading the finished store does not. The API runs as
+# a dynamic user whose only privilege is this group, so a bug in it reaches one
+# file, read-only
+- name: Create the group that may read the store
+  ansible.builtin.group:
+    name: "{{ metrics_reader_group }}"
     system: true
-    shell: /bin/sh
-    home: "{{ metrics_db_dir }}"
-    create_home: false
-    password_lock: true
 
 - name: Install the units
   ansible.builtin.template:
@@ -40,9 +28,12 @@
   loop:
     - skibidi-metrics.service
     - skibidi-metrics.timer
+    - skibidi-metrics-api.socket
+    - skibidi-metrics-api@.service
+  register: metrics_units
   notify: Reload systemd
 
-- name: Apply the unit changes before enabling the timer
+- name: Apply the unit changes before enabling anything
   ansible.builtin.meta: flush_handlers
 
 # Skipped in check mode: the unit it enables is written by this same play,
@@ -63,114 +54,65 @@
   changed_when: false
   when: not ansible_check_mode
 
-# Group read is the entire privilege the export account holds. setgid keeps
-# whatever sqlite creates beside the store inside the group, so a later journal
-# file cannot end up unreadable to the export
-- name: Let the export group read what root collects
+# Group read is the entire privilege the API holds. setgid keeps whatever
+# sqlite creates beside the store inside the group, so a later journal file
+# cannot end up unreadable to the API
+- name: Let the reader group read what root collects
   ansible.builtin.file:
     path: "{{ metrics_db_dir }}"
     state: directory
     owner: root
-    group: "{{ metrics_export_user }}"
+    group: "{{ metrics_reader_group }}"
     mode: "2750"
 
 - name: Keep the store itself root-written and group-read
   ansible.builtin.file:
     path: "{{ metrics_db_dir }}/metrics.db"
     owner: root
-    group: "{{ metrics_export_user }}"
+    group: "{{ metrics_reader_group }}"
     mode: "0640"
   when: not ansible_check_mode
 
-# Run as the account the master will arrive as, not as root: a read-only open
-# that needs write access anyway is exactly the kind of thing that works in
-# development and fails on the node. runuser rather than become_user or sudo:
-# an unprivileged become needs the acl package just to hand over Ansible's
-# temp files, sudo is absent from minimal images, and util-linux is everywhere
-- name: Prove the store answers the export account with what was just written
-  ansible.builtin.command:
-    argv:
-      - runuser
-      - -u
-      - "{{ metrics_export_user }}"
-      - --
-      - /usr/local/sbin/skibidi-metrics
-      - export
-      - --since
-      - "0"
-      - --until
-      - "{{ metrics_forever_us }}"
-  become: true
-  register: metrics_export
-  changed_when: false
-  failed_when: metrics_export.rc != 0 or (metrics_export.stdout | from_json).samples | length == 0
+# A running socket keeps the address and options it was started with, so a
+# changed unit restarts it; a request in flight belongs to its own process
+# and survives that
+- name: Listen for API requests
+  ansible.builtin.systemd_service:
+    name: skibidi-metrics-api.socket
+    enabled: true
+    state: "{{ 'restarted' if metrics_units.changed else 'started' }}"
   when: not ansible_check_mode
 
-# The inverse proof, because a check that cannot go red is not evidence: if
-# this account ever gains the ability to write the store, the deploy stops
-- name: Prove the export account cannot write the store
+# Asked the way the master will ask: through the socket, the sandbox and the
+# dynamic user, at the address the letter reads. A sandbox that cannot reach
+# the store, or a socket bound somewhere else, fails here instead of on Monday
+- name: Prove the API answers at the address the letter reads
+  ansible.builtin.uri:
+    url: >-
+      http://{{ '[' ~ metrics_host ~ ']' if ':' in metrics_host else metrics_host }}:{{ metrics_api_port }}/v1/samples
+    return_content: true
+  register: metrics_api_answer
+  retries: 5
+  delay: 2
+  until: metrics_api_answer.status == 200
+  failed_when: metrics_api_answer.status != 200 or metrics_api_answer.json.rows | length == 0
+  when: not ansible_check_mode
+
+# The inverse proof, because a check that cannot go red is not evidence: an
+# account with nothing but the reader group must not be able to write the store.
+# setpriv rather than become_user or sudo: an unprivileged become needs the acl
+# package just to hand over Ansible's temp files, and util-linux is everywhere
+- name: Prove the reader group cannot write the store
   ansible.builtin.command:
-    argv: [runuser, -u, "{{ metrics_export_user }}", --, /usr/local/sbin/skibidi-metrics, collect]
-  become: true
+    argv:
+      - setpriv
+      - --reuid=nobody
+      - --regid=nogroup
+      - --groups={{ metrics_reader_group }}
+      - --
+      - /usr/local/sbin/skibidi-metrics
+      - collect
   register: metrics_write_probe
   changed_when: false
   failed_when: metrics_write_probe.rc == 0
   when: not ansible_check_mode
-
-# The master reads the fleet's stores at report time over a key that this guard
-# reduces to a single question. Generated on the master and never leaving it;
-# the nodes get only the public half
-- name: Give the master a key that can only ask for metrics
-  ansible.builtin.command:
-    argv: [ssh-keygen, -t, ed25519, -N, "", -C, skibidi-report, -f, /root/.ssh/skibidi-report]
-  args:
-    creates: /root/.ssh/skibidi-report
-  when: "'master' in group_names"
-
-# An unattended key cannot have a passphrase, so its file mode is the whole
-# protection; asserted rather than assumed, because ssh-keygen's 0600 survives
-# only until someone copies the file around
-- name: Keep the private half readable by root alone
-  ansible.builtin.file:
-    path: /root/.ssh/skibidi-report
-    owner: root
-    group: root
-    mode: "0600"
-  when: "'master' in group_names and not ansible_check_mode"
-
-- name: Read the public half back
-  ansible.builtin.slurp:
-    src: /root/.ssh/skibidi-report.pub
-  register: metrics_master_pubkey
-  when: "'master' in group_names and not ansible_check_mode"
-
-# restrict + a forced command make the key useless for anything but the export,
-# from= makes it useless off the tunnel, and the account it opens cannot log
-# in, cannot write the store and could not escalate even without the guard
-# A play that left the master out (--limit, say) has no public half to hand
-# over, and skipping silently would deploy a node the letter cannot read.
-# Named rather than skipped: the operator ran the play, and the play must say
-# what it could not do
-- name: Refuse to deploy a node whose master was not in this play
-  ansible.builtin.assert:
-    that: hostvars[groups['master'] | first].metrics_master_pubkey is defined
-    fail_msg: >-
-      the master {{ groups['master'] | first }} was not in this play, so its pull
-      key is unknown here and this node would be deployed unreadable to the
-      letter; run the play with the master included
-  when:
-    - not ansible_check_mode
-    - groups['master'] | default([]) | length > 0
-    - "'master' not in group_names"
-
-- name: Let the master pull this node's metrics and nothing else
-  ansible.posix.authorized_key:
-    user: "{{ metrics_export_user }}"
-    key: "{{ (hostvars[groups['master'] | first].metrics_master_pubkey.content | b64decode).strip() }}"
-    key_options: from="{{ metrics_tunnel_ranges | join(',') }}",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard"
-    comment: skibidi-report
-  when:
-    - not ansible_check_mode
-    - groups['master'] | default([]) | length > 0
-    - "'master' not in group_names"
-    - hostvars[groups['master'] | first].metrics_master_pubkey is defined

@@ -7,8 +7,12 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ### Added
 
 - `geodata`: the timer that refreshes the databases Xray routes by belongs to this repository now, instead of being a script somebody wrote on a node by hand, and it refreshes the Russian and Iranian pairs as well. Four of the six had stood at the day they were installed while every rule that reads a category went on matching a view that only narrowed. Each download is checked against the `sha256sum` its own release publishes, in a directory of its own because every upstream calls its files `geoip.dat` and `geosite.dat` and only the local name tells the builds apart, and the six are installed together or not at all. The result is proved twice: against the config the core is running, and against a config that names every database directly — Xray parses a database only when a rule references it, so a truncated file nothing routes by yet is installed unread and surfaces days later. The rollback asks after the core rather than the panel, which stays up quite happily on a config its core refused
+- `metrics`: every node serves its metric store as JSON over HTTP on its tailnet address, documented in `docs/metrics-api.md` and shaped like the mail host's statistics API: `/v1/health`, `/v1/samples` for raw rows of a window, and `/v1/aggregates` for hourly or daily buckets, with cumulative counters turned into reset-tolerant deltas. The socket is bound to the tunnel interface and admits tunnel sources alone, and each request is answered by a fresh sandboxed process that can only read the store. The checker turns red when the socket stops, a listener or a firewall rule appears off the tunnel, the API stops answering on the node's tunnel address, or the store becomes readable to others
+- `tailscale`: `tailscale_ssh = true` in a node file switches Tailscale SSH on, on a node that joined long ago as well. The switch runs in the last play, ten seconds after the play lets go of the node, because it takes port 22 on the tailnet address. The tailnet's ACL must let the operator in before a node opts in. The default stays off
 
 ### Changed
+
+- `reporter` reads every node through the metrics API, the master's own store included, instead of over SSH. Every node file now needs `metrics_host`, the master's too; a master without one fails the deploy. The deploy-time probe asks each node's API the way the letter does, so it also proves the endpoint a dashboard will read
 
 - `common` sets the system resolver to Quad9 `9.9.9.9`, with Cloudflare `1.1.1.1` as the only fallback, from `common_dns_servers`. Xray resolves through it, so this decides which third party sees every name a client asks for. The role writes `/etc/resolv.conf` as a plain file and replaces the symlink into systemd-resolved where there is one, so the cloud's DHCP resolver and its search domains no longer apply. A node that had Google DNS in that file loses it on the next deploy. `common_manage_resolver = false` in a node file leaves that node's own resolver alone: a node in a country that inspects traffic may need the cloud resolver, because plain UDP 53 to a foreign resolver crosses the censor's DPI
 - `xui` installs and pins 3x-ui 3.8.5, which bundles Xray-core 26.9.9. The release's own "Action required" notes apply on upgrade: a hysteria2 outbound stored with `udpHop` has to be re-imported, and a save or enable whose ports collide is now refused
@@ -16,6 +20,10 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - `xui` no longer puts a pinned `x-ui.sh` back after the installer, because the installer now fetches the script from the installed tag, and no longer tightens the permissions of `/etc/x-ui`, because the panel now keeps its store owner-only itself. The checker still turns red on anything looser
 - the repository-wide deviation record moved from `docs/deviations.md` to the conventional root `DEVIATIONS.md` and is linked from a header badge
 - the workaround entries left `DEVIATIONS.md` for their own conventional root `WORKAROUNDS.md`, so a reader no longer has to guess which upstream gap forced what: the six that exist only because upstream is missing or broken something now sit beside the report that would retire them, and `DEVIATIONS.md` keeps only the deliberate choices, pinned security practices and the two jails that warn nobody
+
+### Removed
+
+- The SSH metrics export: the `skibidi-metrics` login account, its authorized key and forced-command guard, and the master's pull key pair. The first deploy removes all of them from a node, keeping the store; `skibidi-metrics` stays only as the group that may read it
 
 ## [1.0.1] - 2026-09-03
 

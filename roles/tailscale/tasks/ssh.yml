@@ -1,0 +1,32 @@
+---
+# Run by the last play of site.yml, after every other role, and never from
+# main.yml. From the moment Tailscale SSH is switched, the daemon takes port 22
+# on the tailnet address, and the SSH session a play rides there may be one of
+# the connections it takes over. tailscale up applies --ssh only when a node
+# joins, so this is also what changes the setting on a node already joined
+
+- name: Read the SSH setting the daemon holds
+  ansible.builtin.command: tailscale debug prefs
+  register: tailscale_prefs
+  changed_when: false
+  check_mode: false
+
+# A transient timer rather than the command itself: the switch happens ten
+# seconds after the play has let go of the node. lose-ssh is the risk the CLI
+# asks about when a session over Tailscale SSH would end, and nobody is there
+# to answer it
+- name: Switch Tailscale SSH to what the registry declares, once the play is done
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --unit=skibidi-tailscale-ssh
+      - --collect
+      - --on-active=10
+      - --timer-property=AccuracySec=1s
+      - --timer-property=RemainAfterElapse=no
+      - /usr/bin/tailscale
+      - set
+      - --ssh={{ tailscale_ssh | bool | lower }}
+      - --accept-risk=lose-ssh
+  changed_when: true
+  when: (tailscale_prefs.stdout | from_json).RunSSH | default(false) | bool != tailscale_ssh | bool

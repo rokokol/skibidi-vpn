@@ -20,3 +20,14 @@
     - role: reporter
       when: "'master' in group_names and reporter_to | length > 0"
     - checker
+
+# Last and on its own: switching Tailscale SSH can take over the SSH session a
+# play rides on the tailnet address, so nothing may run after it
+- name: Switch Tailscale SSH to what each node declares
+  hosts: nodes
+  become: "{{ ansible_become | default(false) }}"
+  tasks:
+    - name: Switch Tailscale SSH
+      ansible.builtin.include_role:
+        name: tailscale
+        tasks_from: ssh

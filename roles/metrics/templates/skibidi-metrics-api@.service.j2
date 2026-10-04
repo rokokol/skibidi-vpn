@@ -1,0 +1,46 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Answer one metrics API request
+CollectMode=inactive-or-failed
+
+[Service]
+ExecStart=/usr/local/sbin/skibidi-metrics serve
+Environment=SKIBIDI_METRICS_DB={{ metrics_db_dir }}/metrics.db
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# Group read on the store is the whole privilege. DynamicUser also implies
+# ProtectSystem=strict, PrivateTmp, NoNewPrivileges and RemoveIPC
+DynamicUser=yes
+User={{ metrics_api_user }}
+SupplementaryGroups={{ metrics_reader_group }}
+ProtectSystem=strict
+ReadOnlyPaths={{ metrics_db_dir }}
+ProtectHome=yes
+PrivateDevices=yes
+# The connection arrives as an open descriptor, which works across network
+# namespaces; the process itself has no other network at all
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+UMask=0077
+# A request reads one SQLite file. Anything still running after this is stuck
+RuntimeMaxSec=30
+MemoryMax=256M
+TasksMax=4

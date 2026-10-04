@@ -62,6 +62,12 @@ provisioner:
         reporter_to: report@example.test
         reporter_sendmail: /usr/local/sbin/capture-sendmail
         metrics_watched_units: [x-ui, nginx, fail2ban]
+        # A dummy interface stands in for tailscale0, created by converge
+        # before the roles: it has a device unit the way tailscale0 does, so
+        # the socket's binding and its return after the interface comes back
+        # are tested for real. The address is inside the tunnel ranges
+        metrics_api_interface: skibidi0
+        metrics_host: "100.64.0.1"
 
 verifier:
   name: ansible

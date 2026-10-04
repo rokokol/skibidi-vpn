@@ -65,9 +65,9 @@
     mode: "0600"
 
 # The one proof the roles cannot fake: probe runs the letter's own pull_node —
-# same key, same account, same guard, same configured address. This catches a
-# chain broken between two working ends (a login shell that eats the forced
-# command, a key option sshd refuses), which no single-node check can see, and
+# same port, same path, same configured address. This catches a chain broken
+# between two working ends (a socket bound where the master cannot reach, a
+# sandbox that cannot open the store), which no single-node check can see, and
 # it cannot drift from the letter because it is the letter's code
 - name: Prove each node answers the pull the way the letter will ask
   ansible.builtin.command:
@@ -115,7 +115,7 @@
   changed_when: false
   when: not ansible_check_mode
 
-# Builds the entire letter — panel, SSH pulls, charts, both bodies — and
+# Builds the entire letter — panel, metrics pulls, charts, both bodies — and
 # throws it away. A master is never deployed into a state where Monday's
 # letter would be its first full rehearsal
 - name: Prove the letter builds without sending it

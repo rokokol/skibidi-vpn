@@ -8,26 +8,37 @@ metrics_retention_days: 90
 
 metrics_db_dir: /var/lib/skibidi-metrics
 
-# The account the master's key lands on. Collection stays root — some probes
-# genuinely need it — but reading the finished store is a file permission, not
-# a privilege, so the export gets an account that cannot log in
-metrics_export_user: skibidi-metrics
+# Collection stays root, because some probes need it. Reading the finished
+# store is a file permission, not a privilege: the API runs as a dynamic user
+# whose only access is membership of this group
+metrics_reader_group: skibidi-metrics
 
-# The tunnel, stated as ranges. Used twice for the same reason: sshd matches
-# the pull's source against them (a stolen key is inert outside the tunnel),
-# and the checker requires the pull's destination to be inside them (a public
-# metrics path would cross the internet unencrypted below SSH's view of it).
-# A fleet on a different tunnel has different ranges — override, never edit.
-# Caution: from= sees the address sshd sees; anything that proxies or NATs the
-# connection makes the match fail with a bare authentication error
+# The dynamic user the API runs as. It must not be the name of a static
+# account, or systemd uses that account instead of allocating a dynamic one
+metrics_api_user: skibidi-metrics-api
+
+# The read-only HTTP API, docs/metrics-api.md. Plain HTTP, because WireGuard
+# under the tailnet already encrypts and authenticates below it. The port
+# matches the mail host's statistics API, so one dashboard asks both alike
+metrics_api_port: 9099
+
+# The socket is bound to this interface and starts whenever it appears. The
+# name must stay plain letters, digits and underscores, because the device unit
+# the socket hangs on is named after it
+metrics_api_interface: "{{ firewall_tunnel_interface }}"
+
+# One process per connection, so this is also the most processes a burst of
+# requests can start at once
+metrics_api_max_connections: 8
+
+# The tunnel, stated as ranges. Used for the same reason everywhere: the API's
+# socket admits sources inside them alone, and the checker requires the
+# letter's destinations to be inside them, because a public metrics path would
+# cross the internet unencrypted. A fleet on a different tunnel has different
+# ranges — override, never edit
 metrics_tunnel_ranges:
   - 100.64.0.0/10
   - fd7a:115c:a1e0::/48
-
-# "Until forever" for export windows in microseconds: sixteen nines is the
-# year 2286, comfortably past the fleet and comfortably inside the guard's
-# twenty-digit cap. A name, so the sentinel cannot drift between its uses
-metrics_forever_us: "9999999999999999"
 
 # Timers whose last-fired time the report shows; a quiet one is a mechanism
 # that stopped without saying so, and the checker alerts on it long before

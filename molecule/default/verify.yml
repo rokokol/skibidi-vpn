@@ -15,6 +15,12 @@
   vars_files:
     - ../../roles/common/defaults/main.yml
 
+  # The metrics defaults under one name of their own, so they read the role's
+  # file without outranking anything the scenario sets
+  vars:
+    verify_metrics: "{{ lookup('ansible.builtin.file', '../../roles/metrics/defaults/main.yml') | from_yaml }}"
+    verify_api: http://{{ metrics_host }}:{{ verify_metrics.metrics_api_port }}
+
   tasks:
     - name: Read the effective congestion control and queue discipline
       ansible.builtin.command: sysctl -n {{ item }}
@@ -262,6 +268,112 @@
         fail_msg: >-
           the database holds {{ verify_binding.stdout | trim }}, not
           {{ xui_panel_port }}|{{ xui_base_path }}|{{ xui_listen_ip }}
+
+    # --- the metrics API -----------------------------------------------------
+    #
+    # No authentication, so where it listens is its whole security. Asked over
+    # the stand-in tunnel interface, refused everywhere else, and back on its
+    # own after the interface disappears and returns, the way tailscale0 does
+    # on every tailscaled restart
+
+    - name: Ask the API for its health on the tunnel address
+      ansible.builtin.uri:
+        url: "{{ verify_api }}/v1/health"
+      register: verify_api_health
+
+    - name: Ask the API on loopback, which is not the tunnel interface
+      ansible.builtin.uri:
+        url: http://127.0.0.1:{{ verify_metrics.metrics_api_port }}/v1/health
+        timeout: 5
+      register: verify_api_loopback
+      failed_when: false
+
+    - name: Ask the API for something it does not serve, and with a verb it refuses
+      ansible.builtin.uri:
+        url: "{{ verify_api }}{{ item.path }}"
+        method: "{{ item.method }}"
+        status_code: "{{ item.status }}"
+      loop:
+        - { path: /v1/export, method: GET, status: 404 }
+        - { path: /v1/health, method: POST, status: 501 }
+
+    - name: Read where the API port listens
+      ansible.builtin.command:
+        argv: [ss, -ltnH, "sport = :{{ verify_metrics.metrics_api_port }}"]
+      register: verify_api_listeners
+      changed_when: false
+
+    # Both clauses: a socket listening nowhere would pass the second alone
+    - name: The API answers on the tunnel interface alone
+      ansible.builtin.assert:
+        that:
+          - verify_api_health.json.status == 'ok'
+          - verify_api_loopback.status == -1
+          - verify_api_listeners.stdout_lines | length > 0
+          - >-
+            verify_api_listeners.stdout_lines
+            | reject('search', '%' ~ metrics_api_interface ~ ':' ~ verify_metrics.metrics_api_port ~ ' ')
+            | list | length == 0
+        fail_msg: >-
+          health {{ verify_api_health.json | default('none') }}, loopback status
+          {{ verify_api_loopback.status }}, listeners {{ verify_api_listeners.stdout_lines }}
+
+    - name: Remove the stand-in tunnel interface, the way tailscaled does on a restart
+      ansible.builtin.command:
+        argv: [ip, link, del, "{{ metrics_api_interface }}"]
+      changed_when: true
+
+    - name: Read the socket's state without its interface
+      ansible.builtin.command:
+        argv: [systemctl, is-active, skibidi-metrics-api.socket]
+      register: verify_api_gone
+      changed_when: false
+      failed_when: false
+      retries: 10
+      delay: 1
+      until: verify_api_gone.stdout != 'active'
+
+    - name: Bring the interface back
+      ansible.builtin.shell:
+        cmd: >-
+          ip link add {{ metrics_api_interface }} type dummy &&
+          ip addr add {{ metrics_host }}/32 dev {{ metrics_api_interface }} &&
+          ip link set {{ metrics_api_interface }} up
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Ask the API again once the interface is back
+      ansible.builtin.uri:
+        url: "{{ verify_api }}/v1/health"
+      register: verify_api_back
+      retries: 15
+      delay: 1
+      until: verify_api_back.status == 200
+
+    - name: The socket follows its interface away and back
+      ansible.builtin.assert:
+        that:
+          - verify_api_gone.stdout != 'active'
+          - verify_api_back.json.status == 'ok'
+        fail_msg: "without the interface the socket was {{ verify_api_gone.stdout }}"
+
+    - name: Read the store's modes and look for the old export account
+      ansible.builtin.shell:
+        cmd: >-
+          stat -c '%a:%U:%G' {{ verify_metrics.metrics_db_dir }} {{ verify_metrics.metrics_db_dir }}/metrics.db;
+          getent passwd skibidi-metrics || echo no-account
+        executable: /bin/bash
+      register: verify_store
+      changed_when: false
+
+    - name: The store is read by root and the reader group alone, and the SSH export is gone
+      ansible.builtin.assert:
+        that:
+          - verify_store.stdout_lines == [
+              '2750:root:' ~ verify_metrics.metrics_reader_group,
+              '640:root:' ~ verify_metrics.metrics_reader_group,
+              'no-account']
+        fail_msg: "{{ verify_store.stdout_lines }}"
 
     # --- the weekly letter ----------------------------------------------------
     #

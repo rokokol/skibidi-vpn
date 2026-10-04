@@ -14,7 +14,7 @@ backend = {{ fail2ban_backend }}
 
 # Never ban the tunnel: an administrator locked out of the panel has to reach
 # the node another way, and the tunnel is that way. The ranges are the same
-# declaration the metrics pull is pinned to, so the two cannot drift apart
+# declaration the metrics API admits, so the two cannot drift apart
 ignoreip = {{ fail2ban_ignoreip | join(' ') }}
 
 [sshd]

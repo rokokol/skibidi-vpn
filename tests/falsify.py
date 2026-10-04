@@ -24,6 +24,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORT = "roles/reporter/files/skibidi-report.py"
 ALERT = "roles/checker/files/skibidi-alert-html.py"
+METRICS = "roles/metrics/files/skibidi-metrics.py"
+SOCKET = "roles/metrics/templates/skibidi-metrics-api.socket.j2"
+SERVICE = "roles/metrics/templates/skibidi-metrics-api@.service.j2"
+LEGACY = "roles/metrics/tasks/legacy-ssh-export.yml"
+CHECK = "roles/checker/templates/skibidi-check.j2"
+REPORT_CONFIG = "roles/reporter/templates/report.toml.j2"
+TAILSCALE_SSH = "roles/tailscale/tasks/ssh.yml"
 
 
 @dataclass
@@ -112,6 +119,139 @@ DEFECTS = [
         replace='    if False:\n        return "fail"',
         consequence="the one line that says what broke is styled like every passing check",
         file=ALERT,
+    ),
+    Defect(
+        name="api/every-interface",
+        file=SOCKET,
+        find="BindToDevice={{ metrics_api_interface }}\n",
+        replace="",
+        consequence="the unauthenticated API answers on the public interface as soon as ufw slips",
+    ),
+    Defect(
+        name="api/any-source",
+        file=SOCKET,
+        find="IPAddressDeny=any\n",
+        replace="",
+        consequence="a source outside the tunnel is admitted by the socket",
+    ),
+    Defect(
+        name="api/range-ignored",
+        file=METRICS,
+        find='FROM samples WHERE ts_us >= ? AND ts_us < ?"',
+        replace='FROM samples WHERE ts_us >= ? OR ts_us < ?"',
+        consequence="a history slice returns the whole store, and the letter counts every week as this one",
+    ),
+    Defect(
+        name="api/counters-raw",
+        file=METRICS,
+        find="            change = clamped_delta(value, previous)",
+        replace="            change = value",
+        consequence="a dashboard sums running totals and shows thousands of bans an hour",
+    ),
+    Defect(
+        name="api/counter-reset-negative",
+        file=METRICS,
+        find="    return new - old if new >= old else new",
+        replace="    return new - old",
+        consequence="a fail2ban restart turns into a negative number of bans",
+    ),
+    Defect(
+        name="api/counter-edge-lost",
+        file=METRICS,
+        find="            previous = baselines.get(previous_series)",
+        replace="            previous = None",
+        consequence="the first step of every window is dropped at its edge",
+    ),
+    Defect(
+        name="api/half-bucket",
+        file=METRICS,
+        find="    first = -(-start // step) * step",
+        replace="    first = start // step * step",
+        consequence="a window starting mid-hour reports a bucket it saw only half of",
+    ),
+    Defect(
+        name="api/writable-open",
+        file=METRICS,
+        find='f"file:{path or DB_PATH}?mode=ro"',
+        replace='f"file:{path or DB_PATH}?mode=rwc"',
+        consequence="a node whose collector never ran reads as a healthy, empty store",
+    ),
+    Defect(
+        name="api/static-user",
+        file=SERVICE,
+        find="DynamicUser=yes",
+        replace="DynamicUser=no",
+        consequence="every request runs as root, with write access to the store",
+    ),
+    Defect(
+        name="api/network",
+        file=SERVICE,
+        find="PrivateNetwork=yes",
+        replace="PrivateNetwork=no",
+        consequence="a compromised request handler can open connections anywhere",
+    ),
+    Defect(
+        name="pull/cut-week-accepted",
+        file=REPORT,
+        find='    if payload.get("truncated"):',
+        replace="    if False:",
+        consequence="a week cut at the row limit is reported as a quiet week",
+    ),
+    Defect(
+        name="pull/master-skipped",
+        file=REPORT_CONFIG,
+        find="{% for host in ([inventory_hostname] + groups['nodes'] | default([])) | unique | sort %}",
+        replace="{% for host in groups['nodes'] | default([]) | sort if host != inventory_hostname %}",
+        consequence="the letter no longer reads the master's own store",
+    ),
+    Defect(
+        name="cleanup/account-kept",
+        file=LEGACY,
+        find="    name: skibidi-metrics\n    state: absent",
+        replace="    name: skibidi-metrics\n    state: present",
+        consequence="the old login account and its key stay on every node",
+    ),
+    Defect(
+        name="cleanup/key-kept",
+        file=LEGACY,
+        find="    path: /root/.ssh/skibidi-report\n",
+        replace="    path: /root/.ssh/skibidi-report.old\n",
+        consequence="the master keeps a passphrase-less key nothing uses",
+    ),
+    Defect(
+        name="check/stray-listener-blind",
+        file=CHECK,
+        find="grep -v '%{{ metrics_api_interface }}:{{ metrics_api_port }}$'",
+        replace="grep -v ':{{ metrics_api_port }}$'",
+        consequence="the API listening on every interface reads as healthy",
+    ),
+    Defect(
+        name="check/public-rule-blind",
+        file=CHECK,
+        find="$1 ~ /^{{ metrics_api_port }}(\\/tcp)?$/ && !/on {{ firewall_tunnel_interface }}/')",
+        replace="$1 ~ /^{{ metrics_api_port }}(\\/tcp)?$/ && /on {{ firewall_tunnel_interface }}/')",
+        consequence="a ufw rule opening the API port to the world goes unnoticed",
+    ),
+    Defect(
+        name="check/store-mode-blind",
+        file=CHECK,
+        find='store_loose=$(find "$store_dir" -perm /o+rwx 2>/dev/null | wc -l)',
+        replace="store_loose=0",
+        consequence="a world-readable journal file beside the store goes unnoticed",
+    ),
+    Defect(
+        name="tailscale/switch-mid-play",
+        file=TAILSCALE_SSH,
+        find="      - --on-active=10\n",
+        replace="",
+        consequence="Tailscale SSH takes over port 22 while the play still rides it",
+    ),
+    Defect(
+        name="tailscale/switch-every-run",
+        file=TAILSCALE_SSH,
+        find="  when: (tailscale_prefs.stdout | from_json).RunSSH | default(false) | bool != tailscale_ssh | bool",
+        replace="  when: true",
+        consequence="every deploy reschedules the switch and is never idempotent",
     ),
 ]
 

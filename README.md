@@ -81,12 +81,12 @@ Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEV
 | --- | --- |
 | `common` | congestion control, queue discipline, conntrack limits, one outgoing address family, the system resolver |
 | `firewall` | ufw policy, the three public ports, and hiding the tunnel's direct path |
-| `tailscale` | the private network the panel is reachable on |
+| `tailscale` | the private network the panel is reachable on, and Tailscale SSH where a node opts in |
 | `xui` | the pinned panel, bound to the tunnel address, asserted afterwards |
 | `certs` | a wildcard certificate over DNS-01, so only the wildcard reaches Certificate Transparency |
 | `nginx` | port 80, and the optional egress-address echo |
 | `fail2ban` | the sshd, recidive and panel address-limit jails, each proven to read the log it is meant to |
-| `metrics` | a ten-minute sampler of what the panel does not know, and the read-only export the master pulls |
+| `metrics` | a ten-minute sampler of what the panel does not know, served read-only on the tailnet by the [metrics API](docs/metrics-api.md) |
 | `reporter` | the Monday letter, built from the panel's database and the fleet's metric stores; master only |
 | `checker` | the half-hourly self-check, mailed on failure straight past the master |
 | `warp` | Cloudflare WARP as a local proxy, with a watchdog that counts its own restarts |

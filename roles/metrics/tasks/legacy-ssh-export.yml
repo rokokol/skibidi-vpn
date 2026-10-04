@@ -1,0 +1,30 @@
+---
+# The SSH export this role installed before the HTTP API replaced it. Each task
+# is a no-op on a node that never had it. Delete this file once every node has
+# been deployed with it
+
+# Never with remove: the account's home is the metric store itself. userdel
+# also drops the account's own group; the role creates the reader group again
+# right after this file
+- name: Remove the account the master's key used to land on
+  ansible.builtin.user:
+    name: skibidi-metrics
+    state: absent
+
+# The key in here still opens a forced command that no longer exists; left
+# behind, it is a door nobody watches
+- name: Remove the authorized key that opened the export
+  ansible.builtin.file:
+    path: "{{ metrics_db_dir }}/.ssh"
+    state: absent
+
+# A key without a passphrase that nothing uses any more is only a liability
+- name: Remove the private half of the master's pull key
+  ansible.builtin.file:
+    path: /root/.ssh/skibidi-report
+    state: absent
+
+- name: Remove the public half of the master's pull key
+  ansible.builtin.file:
+    path: /root/.ssh/skibidi-report.pub
+    state: absent

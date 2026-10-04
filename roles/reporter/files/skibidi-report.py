@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The weekly letter. One message from the master, covering the whole fleet.
 
-Everything here reads — the panel's own database, opened read-only, the
-fleet's metric stores over a key that can only ask for metrics, and this host's
-own daily snapshots — and writes one multipart message.
+Everything here reads — the panel's own database, opened read-only, every
+node's metric store through its read-only API on the tailnet (this master's
+own included), and this host's own daily snapshots — and writes one multipart
+message.
 
 Two rules the layout hangs on, both inherited from the mail host's report. A
 section with nothing to say is omitted entirely, in text and HTML alike — but
@@ -32,6 +33,9 @@ import sqlite3
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from email.message import EmailMessage
 from pathlib import Path
@@ -134,15 +138,11 @@ def load_config(path: str | None = None) -> dict:
     config.setdefault("panel", {})
     config.setdefault("paths", {})
     config.setdefault("nodes", [])
+    config.setdefault("metrics", {})
+    config["metrics"].setdefault("port", 9099)
     paths = config["paths"]
     paths.setdefault("state_dir", "/var/lib/skibidi-report")
-    paths.setdefault("metrics", "/usr/local/sbin/skibidi-metrics")
     paths.setdefault("sendmail", "/usr/sbin/sendmail")
-    paths.setdefault("ssh_key", "/root/.ssh/skibidi-report")
-    # The unprivileged export account on the nodes, never root: the key's guard
-    # is tested, but defence in depth means a bypassed guard lands somewhere
-    # that can only read one file
-    paths.setdefault("ssh_user", "skibidi-metrics")
     panel = config["panel"]
     panel.setdefault("db", "/etc/x-ui/x-ui.db")
     panel.setdefault("xui_bin", "/usr/local/x-ui/x-ui")
@@ -476,54 +476,91 @@ class StaleWindow(Exception):
     pass
 
 
+def fetch(config: dict, node: dict, path: str, query: dict | None = None) -> dict:
+    """One GET against a node's metrics API, every failure a StaleWindow.
+
+    The API is plain HTTP on the tailnet, where WireGuard already encrypts and
+    authenticates below it; docs/metrics-api.md is the contract.
+    """
+    host = node["host"]
+    if ":" in host:
+        host = f"[{host}]"
+    url = f"http://{host}:{config['metrics']['port']}{path}"
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        with error:
+            try:
+                reason = json.loads(error.read()).get("error", "")
+            except (ValueError, AttributeError, OSError):
+                reason = ""
+        raise StaleWindow(f"HTTP {error.code} {reason}".strip()) from None
+    except (urllib.error.URLError, OSError) as error:
+        raise StaleWindow(str(getattr(error, "reason", error)) or "no answer") from None
+
+
 def pull_node(config: dict, node: dict, start_us: int, end_us: int) -> dict:
-    argv = [
-        "ssh", "-i", config["paths"]["ssh_key"],
-        "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-        "-o", "StrictHostKeyChecking=accept-new",
-        f"{config['paths']['ssh_user']}@{node['host']}",
-        f"skibidi-metrics export --since {start_us} --until {end_us}",
-    ]
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
-    if result.returncode != 0:
-        raise StaleWindow(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "no answer")
-    return json.loads(result.stdout)
+    """A node's window as the letter reads it: rows of (ts_us, metric, detail, value)."""
+    payload = fetch(config, node, "/v1/samples",
+                    {"from": start_us // 1_000_000, "to": end_us // 1_000_000})
+    # A cut week reads exactly like a quiet one in every counter, so it is
+    # refused rather than reported
+    if payload.get("truncated"):
+        raise StaleWindow("answered with a cut window")
+    return {
+        "collected_through_us": payload.get("collected_through_us") or 0,
+        "samples": [
+            [row["ts_us"], row["metric"], next(iter(row["dimensions"].values()), ""), row["value"]]
+            for row in payload["rows"]
+        ],
+    }
 
 
-def local_export(config: dict, start_us: int, end_us: int) -> dict:
-    result = subprocess.run(
-        [config["paths"]["metrics"], "export", "--since", str(start_us), "--until", str(end_us)],
-        capture_output=True, text=True, timeout=60, check=False,
-    )
-    if result.returncode != 0:
-        raise StaleWindow(result.stderr.strip() or "local metrics store did not answer")
-    return json.loads(result.stdout)
+def wait_for_collector(config: dict, master_name: str, end_us: int, deadline: float,
+                       interval: float = 5) -> bool:
+    """True once the master's collector has crossed the window's end."""
+    master = next((node for node in config["nodes"] if node["name"] == master_name), None)
+    while master is not None:
+        try:
+            if (fetch(config, master, "/v1/health").get("collected_through_us") or 0) >= end_us:
+                return True
+        except (StaleWindow, json.JSONDecodeError):
+            pass
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(interval)
+    return False
 
 
 def probe(config: dict) -> int:
     """The deploy's question, asked with the letter's own mouth.
 
-    Runs pull_node itself — same key, same account, same guard, same address —
+    Runs pull_node itself — same port, same path, same configured address —
     so nothing can drift between what the deploy proved and what Monday does.
-    A hand-built ssh here once passed while the real pull was broken by a
-    nologin shell; that class of gap is exactly what reusing the code closes.
+    A hand-built check here once passed while the real pull was broken; that
+    class of gap is exactly what reusing the code closes. The last hour, so the
+    answer is small and still has to come from a store that exists.
     """
     failures = []
+    end_us = int(time.time()) * 1_000_000
     for node in config["nodes"]:
         try:
-            payload = pull_node(config, node, 0, 1)
-        except (StaleWindow, json.JSONDecodeError, subprocess.TimeoutExpired, OSError) as error:
+            payload = pull_node(config, node, end_us - 3600 * 1_000_000, end_us)
+        except (StaleWindow, json.JSONDecodeError, KeyError, TypeError) as error:
             failures.append(f"{node['name']}: {error}")
             continue
         if "samples" not in payload:
-            failures.append(f"{node['name']}: answered, but not with an export")
+            failures.append(f"{node['name']}: answered, but not with samples")
     for line in failures:
         print(line, file=sys.stderr)
     print(f"probed {len(config['nodes'])} node(s), {len(failures)} refused")
     return 1 if failures else 0
 
 
-def gather_metrics(config: dict, start_us: int, end_us: int, master_name: str):
+def gather_metrics(config: dict, start_us: int, end_us: int):
     """Every node's window, with absence recorded rather than smoothed over.
 
     A node that was down looks exactly like a quiet one in every counter it
@@ -531,14 +568,10 @@ def gather_metrics(config: dict, start_us: int, end_us: int, master_name: str):
     of letting their silence read as health.
     """
     exports, unreachable, stale = {}, [], []
-    try:
-        exports[master_name] = local_export(config, start_us, end_us)
-    except (StaleWindow, json.JSONDecodeError, OSError) as error:
-        unreachable.append((master_name, str(error)))
     for node in config["nodes"]:
         try:
             exports[node["name"]] = pull_node(config, node, start_us, end_us)
-        except (StaleWindow, json.JSONDecodeError, subprocess.TimeoutExpired, OSError) as error:
+        except (StaleWindow, json.JSONDecodeError, KeyError, TypeError) as error:
             unreachable.append((node["name"], str(error)))
     for name, export in exports.items():
         if export.get("collected_through_us", 0) < end_us - 30 * 60 * 1_000_000:
@@ -1192,18 +1225,9 @@ def assemble(config: dict, now=None) -> dict:
     # The letter always goes out — silence is reserved for the reporting
     # itself being broken.
     deadline = time.monotonic() + int(report.get("catchup_seconds", 120))
-    window_incomplete = True
-    while time.monotonic() < deadline:
-        try:
-            probe = local_export(config, end_us - 1, end_us)
-            if probe.get("collected_through_us", 0) >= end_us:
-                window_incomplete = False
-                break
-        except (StaleWindow, json.JSONDecodeError, OSError):
-            pass
-        time.sleep(5)
+    window_incomplete = not wait_for_collector(config, master_name, end_us, deadline)
 
-    exports, unreachable, stale = gather_metrics(config, start_us, end_us, master_name)
+    exports, unreachable, stale = gather_metrics(config, start_us, end_us)
 
     data = {
         "start": start,

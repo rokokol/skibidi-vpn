@@ -2,4 +2,8 @@
 tailscale_auth_key: ""          # from the vault; never a literal here
 tailscale_hostname: "{{ inventory_hostname }}"
 tailscale_accept_routes: false
+# Tailscale SSH takes port 22 on the tailnet address only; sshd keeps the
+# public one. A node file sets tailscale_ssh = true to opt in, and the ACL of
+# the tailnet must then allow the operator in, or SSH over the tailnet stops
+# working. Applied by tasks/ssh.yml in the last play of site.yml
 tailscale_ssh: false

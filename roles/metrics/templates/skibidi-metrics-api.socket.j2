@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Metrics API on the tunnel interface
+
+[Socket]
+ListenStream={{ metrics_api_port }}
+BindIPv6Only=both
+{% if metrics_api_interface %}
+# SO_BINDTODEVICE: a packet that arrived on any other interface finds no
+# listener here, whatever the firewall says. A connection from this host to its
+# own tunnel address still matches, so the master can read its own store
+BindToDevice={{ metrics_api_interface }}
+{% endif %}
+# Applied to the sockets of this unit by a cgroup filter: a source outside the
+# tunnel is dropped even on the right interface. localhost serves a host that
+# sets no interface; with BindToDevice no loopback packet reaches this socket
+IPAddressDeny=any
+IPAddressAllow=localhost {{ metrics_tunnel_ranges | join(' ') }}
+# A fresh sandboxed process per connection, which answers and exits: nothing
+# stays resident, and a crash costs one request
+Accept=yes
+MaxConnections={{ metrics_api_max_connections }}
+
+[Install]
+{% if metrics_api_interface %}
+# Not sockets.target. BindToDevice adds BindsTo= on the interface's device
+# unit, so the socket stops when tailscaled removes its interface on a restart.
+# Wanted by that device, it starts again each time the interface appears
+WantedBy=sys-subsystem-net-devices-{{ metrics_api_interface }}.device
+{% else %}
+WantedBy=sockets.target
+{% endif %}

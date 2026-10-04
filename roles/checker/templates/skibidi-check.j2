@@ -252,7 +252,7 @@ fi
 # The panel creates its database world-readable, and every copy this role's
 # backup takes inherits that. The file holds every client credential and the
 # Reality private keys, so its mode is the whole difference between "root can
-# read it" and "the export account can read it"
+# read it" and "any local account can read it"
 if [ -d "$(dirname {{ xui_db }})" ]; then
     loose=$(find "$(dirname {{ xui_db }})" -maxdepth 1 \( -perm -o+r -o -perm -g+r \) \
         \( -type d -o -name "$(basename {{ xui_db }})*" \) 2>/dev/null | wc -l)
@@ -358,12 +358,77 @@ PYEOF
 fi
 {% endif %}
 
-# --- the metrics pull -------------------------------------------------------
+# --- the metrics API --------------------------------------------------------
 #
-# The weekly pull must ride the tunnel by declaration, not by coincidence. The
-# from= restriction on the nodes pins where the pull may come from; this end
-# pins where it may go, because the moment a configured address is public, the
-# fleet's metrics cross the open internet.
+# The API has no authentication, so who can reach it is the whole of its
+# security: the socket bound to the tunnel interface, no firewall rule for its
+# port anywhere else, and a store nobody but root and the reader group can
+# open. The pull must also ride the tunnel by declaration, not by coincidence:
+# the socket pins where a request may come from, and the master's list pins
+# where the letter may go, because the moment a configured address is public
+# the fleet's metrics cross the open internet in clear.
+
+if systemctl is-active --quiet skibidi-metrics-api.socket; then
+    ok "the metrics API socket is listening"
+else
+    fail "the metrics API socket is not active; the letter and the dashboard cannot read this node"
+fi
+
+# An empty answer must not pass: "nothing listens off the tunnel" is also what
+# a socket that listens nowhere looks like
+api_listeners=$(ss -ltnH "sport = :{{ metrics_api_port }}" 2>/dev/null | awk '{print $4}')
+if [ -z "$api_listeners" ]; then
+    fail "nothing listens on the metrics API port {{ metrics_api_port }}"
+{% if metrics_api_interface %}
+elif api_stray=$(printf '%s\n' "$api_listeners" | grep -v '%{{ metrics_api_interface }}:{{ metrics_api_port }}$'); then
+    fail "the metrics API also listens on $(echo "$api_stray" | tr '\n' ' '), not only on {{ metrics_api_interface }}"
+else
+    ok "the metrics API listens on {{ metrics_api_interface }} alone"
+{% else %}
+else
+    ok "the metrics API listens"
+{% endif %}
+fi
+
+# The tunnel's own rule admits every port arriving on it. A rule naming this
+# port without the tunnel interface is the one that would open it to the world
+api_rules=$(ufw status 2>/dev/null \
+    | awk '/ALLOW/ && $1 ~ /^{{ metrics_api_port }}(\/tcp)?$/ && !/on {{ firewall_tunnel_interface }}/')
+if [ -z "$api_rules" ]; then
+    ok "no firewall rule admits the metrics API port off the tunnel"
+else
+    fail "the firewall admits port {{ metrics_api_port }} off the tunnel: $(echo "$api_rules" | tr -s ' ' | tr '\n' ';')"
+fi
+
+{% if metrics_host is defined %}
+api_url='http://{{ "[" ~ metrics_host ~ "]" if ":" in metrics_host else metrics_host }}:{{ metrics_api_port }}/v1/health'
+api_health=$(curl -fsS --max-time 10 "$api_url" 2>&1)
+case "$api_health" in
+    *'"status":"ok"'*) ok "the metrics API answers on {{ metrics_host }}" ;;
+    *) fail "the metrics API does not answer healthy on {{ metrics_host }}: ${api_health:-no answer}" ;;
+esac
+{% endif %}
+
+# The reader group is the API's only way in; anything wider than that hands
+# the fleet's history to every local account
+store_dir={{ metrics_db_dir }}
+store_modes="$(stat -c '%a:%U:%G' "$store_dir" 2>/dev/null) $(stat -c '%a:%U:%G' "$store_dir/metrics.db" 2>/dev/null)"
+store_loose=$(find "$store_dir" -perm /o+rwx 2>/dev/null | wc -l)
+if [ "$store_modes" = "2750:root:{{ metrics_reader_group }} 640:root:{{ metrics_reader_group }}" ] && [ "$store_loose" -eq 0 ]; then
+    ok "the metric store is readable by root and {{ metrics_reader_group }} alone"
+else
+    fail "the metric store is $store_modes with $store_loose file(s) open to others, expected 2750 and 640 root:{{ metrics_reader_group }}"
+fi
+
+# The SSH export the API replaced. A key it left behind still opens a door
+# nobody watches any more
+if getent passwd skibidi-metrics >/dev/null; then
+    fail "the old metrics export account skibidi-metrics still exists"
+elif [ -e /root/.ssh/skibidi-report ]; then
+    fail "the old metrics pull key /root/.ssh/skibidi-report is still here"
+else
+    ok "nothing of the old SSH metrics export is left"
+fi
 
 {% if 'master' in group_names %}
 if [ -r /etc/skibidi/report.toml ]; then
@@ -389,40 +454,7 @@ PYEOF
         fail "the metrics pull would leave the tunnel for: $(printf '%s' "$strays" | tr '\n' ' ')"
     fi
 fi
-
-# No passphrase is possible on an unattended key, so its file mode is the whole
-# protection and drifts silently when the file gets copied around
-pull_key=/root/.ssh/skibidi-report
-if [ -e "$pull_key" ]; then
-    key_perms=$(stat -c '%a:%U' "$pull_key")
-    if [ "$key_perms" = "600:root" ]; then
-        ok "the pull key is readable by root alone"
-    else
-        fail "the pull key is $key_perms, expected 600:root, and it has no passphrase behind it"
-    fi
-fi
 {% endif %}
-
-# The export account's whole security is the leash on its key: from= pins the
-# tunnel, restrict strips every ssh feature, command= forces the guard. The
-# shell cannot be the fence — sshd runs the forced command through it, so it
-# has to be real — which makes a key line missing any part of the leash, or an
-# extra key somebody added "for a minute", the drift to catch
-if export_home=$(getent passwd {{ metrics_export_user }} | cut -d: -f6); then
-    export_keys="$export_home/.ssh/authorized_keys"
-    if [ -r "$export_keys" ]; then
-        # The exact string the role writes, built from the same variables — not
-        # a pattern. A pattern that accepts "some from=" would wave through
-        # from="0.0.0.0/0", which un-pins the tunnel while looking dressed
-        leash='from="{{ metrics_tunnel_ranges | join(",") }}",restrict,command="/usr/local/sbin/skibidi-metrics ssh-guard" '
-        loose=$(awk -v leash="$leash" 'NF && index($0, leash) != 1' "$export_keys" | wc -l)
-        if [ "$loose" -eq 0 ]; then
-            ok "every key on {{ metrics_export_user }} wears the exact leash"
-        else
-            fail "$loose key(s) on {{ metrics_export_user }} do not wear the leash the role writes"
-        fi
-    fi
-fi
 
 # --- WARP -------------------------------------------------------------------
 #

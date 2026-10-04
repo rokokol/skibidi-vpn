@@ -1,7 +1,7 @@
 # {{ ansible_managed }}
 # Read by /usr/local/sbin/skibidi-report. Holds no credential: the panel is
-# read through its own database, opened read-only, and the nodes through a key
-# that can only ask for metrics.
+# read through its own database, opened read-only, and every node, this master
+# included, through its read-only metrics API on the tailnet.
 
 [report]
 timezone = "{{ reporter_timezone }}"
@@ -17,13 +17,16 @@ db = "{{ reporter_panel_db }}"
 [paths]
 state_dir = "{{ reporter_state_dir }}"
 sendmail = "{{ reporter_sendmail }}"
-ssh_user = "{{ metrics_export_user }}"
 
-{% for host in groups['nodes'] | default([]) | sort if host != inventory_hostname %}
+[metrics]
+port = {{ metrics_api_port }}
+
+{% for host in ([inventory_hostname] + groups['nodes'] | default([])) | unique | sort %}
 # metrics_host is the registry's own word for where the pull goes — a tailnet
 # address, which the checker holds it to. Deliberately not defaulted from the
 # panel's listen address: the two are different decisions, and a node that has
-# not declared one fails the deploy rather than silently borrowing the panel's
+# not declared one fails the deploy rather than silently borrowing the panel's.
+# The master is in the list too: it reads its own store through its own API
 [[nodes]]
 name = "{{ host }}"
 host = "{{ hostvars[host].metrics_host }}"

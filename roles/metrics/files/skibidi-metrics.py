@@ -1,28 +1,31 @@
 #!/usr/bin/env python3
-"""Sample the OS-level state the weekly report is built from.
+"""Sample the OS-level state the weekly report is built from, and serve it.
 
-One row per metric per run, appended to SQLite. The report generator on the
-master pulls a window of rows over SSH through a forced-command key, so this
-script is also its own SSH gate: the key installed for the master may run
-nothing but `export`, with arguments this file validates.
+`collect` appends one row per metric per run to SQLite, as root, from a timer.
+`serve` answers one HTTP request on the connection systemd hands it on fd 0,
+as an unprivileged dynamic user that can only read the store. The API is
+described in docs/metrics-api.md; the weekly letter and any dashboard read the
+fleet through it, over the tailnet.
 
 Counters that other software owns (fail2ban totals, unit restart counts) are
-stored as the cumulative values they are; turning them into deltas is the
-reader's job, because only the reader knows the window it is asking about.
+stored as the cumulative values they are. Turning them into deltas is done at
+read time, because only the reader knows the window it is asking about.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
-import shlex
 import socket
 import sqlite3
 import subprocess
 import sys
 import time
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 DB_PATH = Path(os.environ.get("SKIBIDI_METRICS_DB", "/var/lib/skibidi-metrics/metrics.db"))
 RETENTION_DAYS = int(os.environ.get("SKIBIDI_METRICS_RETENTION_DAYS", "90"))
@@ -47,9 +50,9 @@ CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 
 def connect() -> sqlite3.Connection:
-    # 0640/0750 rather than 0600/0700: the export runs as an unprivileged
-    # account that reaches the store through group read, set up by the role.
-    # Root stays the only writer
+    # 0640/0750 rather than 0600/0700: the API runs as an unprivileged user
+    # that reaches the store through group read, set up by the role. Root
+    # stays the only writer
     DB_PATH.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH, timeout=30)
     connection.executescript(SCHEMA)
@@ -57,14 +60,15 @@ def connect() -> sqlite3.Connection:
     return connection
 
 
-def connect_readonly() -> sqlite3.Connection:
+def readonly_connection(path=None):
     # mode=ro never creates the file and refuses every write below SQL level,
-    # so a bug in the export path cannot damage what the collector wrote — and
-    # unlike a plain open it needs no journal files created beside the store,
-    # which the export account could not create anyway
-    connection = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
+    # so a bug in the API cannot damage what the collector wrote. It also
+    # needs no journal files created beside the store, which the API user
+    # could not create anyway. closing(), because sqlite3's own context
+    # manager commits on exit and never closes
+    connection = sqlite3.connect(f"file:{path or DB_PATH}?mode=ro", uri=True, timeout=5)
     connection.execute("PRAGMA query_only = ON")
-    return connection
+    return contextlib.closing(connection)
 
 
 def run(*argv: str) -> str:
@@ -83,6 +87,20 @@ def read_first(path: str) -> str:
 # Each probe returns (metric, detail, value) tuples. A probe that fails costs
 # its own rows and a line in the journal, never the run: the report says which
 # numbers are missing, which beats a node that stopped reporting entirely.
+
+# Metrics stored as the cumulative totals their owner keeps. The API turns
+# these into deltas; every other metric is a gauge, read as it was sampled
+COUNTERS = frozenset({"f2b_failed_total", "f2b_banned_total", "unit_restarts"})
+
+# What a probe's detail column means, so the API can name it. A detail on a
+# metric missing here is still served, under the generic name "detail"
+DIMENSIONS = {
+    "f2b_failed_total": "jail",
+    "f2b_banned_total": "jail",
+    "f2b_banned_now": "jail",
+    "unit_restarts": "unit",
+    "timer_last_fired": "timer",
+}
 
 
 def probe_load():
@@ -252,64 +270,260 @@ def collect() -> int:
     return 0
 
 
-def export(since_us: int, until_us: int) -> int:
-    with connect_readonly() as connection:
-        samples = connection.execute(
-            "SELECT ts_us, metric, detail, value FROM samples "
-            "WHERE ts_us >= ? AND ts_us < ? ORDER BY ts_us",
-            (since_us, until_us),
-        ).fetchall()
-        row = connection.execute(
-            "SELECT value FROM state WHERE key = 'collected_through_us'"
+# ---------------------------------------------------------------- the API
+#
+# Paths, parameters, shapes and status codes follow the mail host's mail-stats
+# API, so one dashboard can read both. docs/metrics-api.md is the contract
+
+RESOLUTIONS = {"hour": 3600, "day": 86400}
+# A month of raw rows is about 120 000; a longer view is what /v1/aggregates
+# is for
+SAMPLES_MAX_DAYS = 31
+SAMPLES_LIMIT = 200_000
+AGGREGATES_LIMIT = 10_000
+
+
+def now_seconds() -> int:
+    return int(time.time())
+
+
+def clamped_delta(new: float, old: float) -> float:
+    # A counter that went down was reset; the honest step is everything the
+    # new counter has seen, not a negative one. The reporter applies the same
+    # rule to its raw rows
+    return new - old if new >= old else new
+
+
+def dimensions(metric: str, detail: str) -> dict:
+    return {DIMENSIONS.get(metric, "detail"): detail} if detail else {}
+
+
+def parse_timestamp(value, default):
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as error:
+        raise ValueError("timestamps must be Unix seconds") from error
+
+
+def window_query(query, maximum_days):
+    now = now_seconds()
+    start = parse_timestamp(query.get("from", [None])[0], now - 86400)
+    end = parse_timestamp(query.get("to", [None])[0], now)
+    if start >= end or end - start > maximum_days * 86400:
+        raise ValueError(
+            f"the requested range must be positive and at most {maximum_days} days"
+        )
+    return start, end
+
+
+def collected_through(connection) -> int | None:
+    row = connection.execute(
+        "SELECT value FROM state WHERE key = 'collected_through_us'"
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def health_snapshot(path, now_us=None):
+    now_us = int(time.time() * 1_000_000) if now_us is None else now_us
+    with readonly_connection(path) as connection:
+        through = collected_through(connection)
+        count, oldest, newest = connection.execute(
+            "SELECT COUNT(*), MIN(ts_us), MAX(ts_us) FROM samples"
         ).fetchone()
-    json.dump(
-        {
-            "node": socket.gethostname(),
-            "now_us": int(time.time() * 1_000_000),
-            "collected_through_us": int(row[0]) if row else 0,
-            "samples": samples,
-        },
-        sys.stdout,
-        separators=(",", ":"),
-    )
-    print()
-    return 0
+    return {
+        "status": "ok" if through is not None else "starting",
+        "node": socket.gethostname(),
+        "collected_through_us": through,
+        "collection_lag_seconds": None if through is None else max(0.0, (now_us - through) / 1_000_000),
+        "samples": count,
+        "samples_oldest_us": oldest,
+        "samples_newest_us": newest,
+    }
 
 
-EXPORT_SHAPE = re.compile(r"^skibidi-metrics export --since (\d{1,20}) --until (\d{1,20})$")
+def samples_snapshot(path, query):
+    start, end = window_query(query, SAMPLES_MAX_DAYS)
+    metric = query.get("metric", [None])[0]
+    sql = "SELECT ts_us, metric, detail, value FROM samples WHERE ts_us >= ? AND ts_us < ?"
+    parameters = [start * 1_000_000, end * 1_000_000]
+    if metric:
+        sql += " AND metric = ?"
+        parameters.append(metric)
+    sql += f" ORDER BY ts_us, metric, detail LIMIT {SAMPLES_LIMIT + 1}"
+    with readonly_connection(path) as connection:
+        rows = connection.execute(sql, parameters).fetchall()
+        through = collected_through(connection)
+    # One row beyond the limit is fetched only to make the cut visible
+    truncated = len(rows) > SAMPLES_LIMIT
+    return {
+        "from": start,
+        "to": end,
+        "truncated": truncated,
+        "collected_through_us": through,
+        "rows": [
+            {"ts_us": ts, "metric": name, "dimensions": dimensions(name, detail), "value": value}
+            for ts, name, detail, value in rows[:SAMPLES_LIMIT]
+        ],
+    }
 
 
-def ssh_guard() -> int:
-    """The only door the master's key opens.
+def aggregate_snapshot(path, query):
+    resolution_name = query.get("resolution", ["hour"])[0]
+    if resolution_name not in RESOLUTIONS:
+        raise ValueError("resolution must be hour or day")
+    step = RESOLUTIONS[resolution_name]
+    start, end = window_query(query, RETENTION_DAYS)
+    metric = query.get("metric", [None])[0]
+    # A bucket belongs to the answer when its start lies in [from, to), the
+    # mail host's rule, so the samples read are those of exactly those buckets
+    first = -(-start // step) * step
+    last = -(-end // step) * step
+    window = [first * 1_000_000, last * 1_000_000]
+    counters = sorted(COUNTERS)
+    marks = ",".join("?" * len(counters))
+    only = " AND metric = ?" if metric else ""
+    extra = [metric] if metric else []
 
-    authorized_keys forces this entry point, so whatever the client asked for
-    arrives as text here and either matches the one permitted shape or is
-    refused. The alternative — trusting the client's command line — would turn
-    a metrics key into a root shell.
+    with readonly_connection(path) as connection:
+        gauges = connection.execute(
+            f"""
+            SELECT ts_us / 1000000 / ? * ? AS bucket, metric, detail,
+                   COUNT(*), SUM(value), MIN(value), MAX(value)
+            FROM samples
+            WHERE ts_us >= ? AND ts_us < ? AND metric NOT IN ({marks}){only}
+            GROUP BY bucket, metric, detail
+            """,
+            [step, step, *window, *counters, *extra],
+        ).fetchall()
+        raw = connection.execute(
+            f"""
+            SELECT ts_us, metric, detail, value FROM samples
+            WHERE ts_us >= ? AND ts_us < ? AND metric IN ({marks}){only}
+            ORDER BY metric, detail, ts_us
+            """,
+            [*window, *counters, *extra],
+        ).fetchall()
+        # The last sample before the window is each counter's baseline, so
+        # the first step inside the window is not lost at its edge. SQLite
+        # takes the bare value column from the row that holds MAX(ts_us)
+        baselines = {
+            (name, detail): value
+            for name, detail, value, _ts in connection.execute(
+                f"""
+                SELECT metric, detail, value, MAX(ts_us) FROM samples
+                WHERE ts_us < ? AND metric IN ({marks}){only}
+                GROUP BY metric, detail
+                """,
+                [window[0], *counters, *extra],
+            )
+        }
+
+    buckets = {
+        (bucket, name, detail): ("gauge", count, total, low, high)
+        for bucket, name, detail, count, total, low, high in gauges
+    }
+    previous_series, previous = None, None
+    for ts, name, detail, value in raw:
+        if (name, detail) != previous_series:
+            previous_series = (name, detail)
+            previous = baselines.get(previous_series)
+        if previous is not None:
+            change = clamped_delta(value, previous)
+            key = (ts // 1_000_000 // step * step, name, detail)
+            _kind, count, total, low, high = buckets.get(key, ("counter", 0, 0.0, change, change))
+            buckets[key] = ("counter", count + 1, total + change, min(low, change), max(high, change))
+        previous = value
+
+    ordered = sorted(buckets.items())
+    truncated = len(ordered) > AGGREGATES_LIMIT
+    return {
+        "resolution": resolution_name,
+        "from": start,
+        "to": end,
+        "truncated": truncated,
+        "rows": [
+            {
+                "bucket_start": bucket,
+                "metric": name,
+                "kind": kind,
+                "dimensions": dimensions(name, detail),
+                "samples": count,
+                "total": total,
+                "minimum": low,
+                "maximum": high,
+            }
+            for (bucket, name, detail), (kind, count, total, low, high) in ordered[:AGGREGATES_LIMIT]
+        ],
+    }
+
+
+def handler_for(database):
+    class Handler(BaseHTTPRequestHandler):
+        # A peer that opens a connection and sends nothing must not hold the
+        # worker; the service's RuntimeMaxSec is the backstop behind this
+        timeout = 10
+
+        def send_json(self, status, payload):
+            body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            request = urlparse(self.path)
+            try:
+                if request.path == "/v1/health":
+                    payload = health_snapshot(database)
+                elif request.path == "/v1/samples":
+                    payload = samples_snapshot(database, parse_qs(request.query))
+                elif request.path == "/v1/aggregates":
+                    payload = aggregate_snapshot(database, parse_qs(request.query))
+                else:
+                    self.send_json(404, {"error": "not found"})
+                    return
+                self.send_json(200, payload)
+            except (OSError, sqlite3.Error):
+                self.send_json(503, {"error": "metrics database unavailable"})
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+
+        def log_message(self, format, *args):  # noqa: A002 — the base class names it
+            return
+
+    return Handler
+
+
+def serve_connection(connection: socket.socket) -> None:
+    """Answer the one request on a connection systemd accepted for us.
+
+    The socket unit runs with Accept=yes, so every connection gets a fresh,
+    sandboxed process with the connection on fd 0, and the process ends with
+    the answer. Nothing stays resident between requests.
     """
-    original = os.environ.get("SSH_ORIGINAL_COMMAND", "")
-    match = EXPORT_SHAPE.match(" ".join(shlex.split(original)))
-    if not match:
-        print("this key exports metrics and does nothing else", file=sys.stderr)
-        return 2
-    return export(int(match.group(1)), int(match.group(2)))
+    try:
+        peer = connection.getpeername()
+    except OSError:
+        peer = ("", 0)
+    try:
+        handler_for(DB_PATH)(connection, peer if isinstance(peer, tuple) else ("", 0), None)
+    finally:
+        with contextlib.suppress(OSError):
+            connection.shutdown(socket.SHUT_RDWR)
+        connection.close()
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) >= 1 and argv[0] == "collect":
+    if argv == ["collect"]:
         return collect()
-    if len(argv) >= 1 and argv[0] == "ssh-guard":
-        return ssh_guard()
-    if (
-        len(argv) == 5
-        and argv[0] == "export"
-        and argv[1] == "--since"
-        and argv[3] == "--until"
-        and argv[2].isdigit()
-        and argv[4].isdigit()
-    ):
-        return export(int(argv[2]), int(argv[4]))
-    print("usage: skibidi-metrics collect | export --since US --until US", file=sys.stderr)
+    if argv == ["serve"]:
+        serve_connection(socket.socket(fileno=0))
+        return 0
+    print("usage: skibidi-metrics collect | serve", file=sys.stderr)
     return 2
 
 

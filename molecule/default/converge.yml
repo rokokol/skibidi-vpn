@@ -2,6 +2,18 @@
 - name: Converge
   hosts: all
   become: true
+  pre_tasks:
+    # The tunnel interface the metrics API binds to; molecule.yml says why
+    - name: Stand a dummy interface in for the tunnel
+      ansible.builtin.shell:
+        cmd: >-
+          ip link show {{ metrics_api_interface }} >/dev/null 2>&1 && exit 0;
+          ip link add {{ metrics_api_interface }} type dummy &&
+          ip addr add {{ metrics_host }}/32 dev {{ metrics_api_interface }} &&
+          ip link set {{ metrics_api_interface }} up && echo created
+        executable: /bin/bash
+      register: converge_dummy
+      changed_when: "'created' in converge_dummy.stdout"
   roles:
     - common
     - tailscale
@@ -13,3 +25,14 @@
     - metrics
     - reporter
     - checker
+
+# The same last play as site.yml. The VM never joins a tailnet, so this proves
+# the setting is read and left alone at the role's default
+- name: Switch Tailscale SSH
+  hosts: all
+  become: true
+  tasks:
+    - name: Switch Tailscale SSH
+      ansible.builtin.include_role:
+        name: tailscale
+        tasks_from: ssh

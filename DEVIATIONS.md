@@ -71,3 +71,13 @@ Things in these roles that read as workarounds and are not: permanent choices th
 **Why it differs from the obvious route:** a key decides what apt trusts. Downloading it at deploy time and checking it against a digest pinned in the repository is the same trust as carrying the bytes, with a network round trip and a failure mode added, and neither vendor publishes a fingerprint to check against instead. Tailscale serves one key for every Ubuntu release (noble and jammy are byte-identical)
 
 **What returning to the obvious route breaks:** a downloaded key adds a network failure mode to every deploy, and an unpinned one turns a rotation into silent trust in a new file rather than a diff here
+
+---
+
+## The metrics API is plain HTTP with no authentication
+
+**Where:** `roles/metrics/templates/skibidi-metrics-api.socket.j2` and `skibidi-metrics-api@.service.j2`, the API in `roles/metrics/files/skibidi-metrics.py`, the pull in `roles/reporter/files/skibidi-report.py`, and the metrics API checks in `roles/checker/templates/skibidi-check.j2`. The contract is `docs/metrics-api.md`
+
+**Why it differs from the obvious route:** the obvious route for data that leaves a host is TLS and a credential. The API serves on the tailnet alone, where WireGuard already encrypts every packet and authenticates its source by node key, and a TLS certificate or a token would add a secret to rotate on every node without adding a party that can be kept out. Reach is decided below HTTP instead: the socket is bound to the tunnel interface, admits tunnel sources alone, has no firewall rule of its own, and the checker turns red when any of the three drifts. The read side carries no privilege worth a credential either: a dynamic user that can only read one store, in a process without a network of its own. It replaced an SSH export with a forced-command key, which had to stop once Tailscale SSH took port 22 on the tailnet address, and whose guard was the one line between a key and a shell. The mail host's statistics API makes the same trade, so one dashboard reads both alike
+
+**What returning to the obvious route breaks:** a token on every node is a secret in a file the registry must not hold and a vault must carry to each deploy, and a certificate on a tailnet address needs either a private CA every reader trusts or a public name that puts the node in Certificate Transparency
