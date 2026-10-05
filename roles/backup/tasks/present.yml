@@ -1,0 +1,180 @@
+---
+# A station without its secrets would install a timer that fails every night.
+# The assertion names the missing key and prints no value
+- name: Fail when vault.yml carries no backup secrets for this node
+  ansible.builtin.assert:
+    that:
+      - backup_rest_password | length > 0
+      - backup_repository_password | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} names a backup station, but vault.yml has no
+      backup_secrets.{{ inventory_hostname }} with rest_password and repository_password
+
+- name: Install what the backup copies and unpacks with
+  ansible.builtin.apt:
+    name: [bzip2, python3, sqlite3]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install the backup script
+  ansible.builtin.template:
+    src: skibidi-backup.j2
+    dest: "{{ backup_script }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+# Before restic, the secrets and the units arrive: a station the script refuses
+# would leave a timer that fails every night. The script owns the rule, so the
+# role asks it rather than restating it
+- name: Refuse a station the backup script refuses
+  ansible.builtin.command:
+    argv: ["{{ backup_script }}", target]
+  changed_when: false
+  when: not ansible_check_mode
+
+# Checked on the installed binary rather than on the download, and on every run:
+# the pin is a statement about the node
+- name: Read the digest of restic
+  ansible.builtin.stat:
+    path: "{{ backup_restic_path }}"
+    checksum_algorithm: sha256
+  register: backup_restic
+
+- name: Note whether restic has to be installed
+  ansible.builtin.set_fact:
+    backup_restic_pending: "{{ backup_restic.stat.checksum | default('') != backup_restic_sha256 }}"
+
+- name: Fetch the pinned restic release
+  ansible.builtin.get_url:
+    url: https://github.com/restic/restic/releases/download/v{{ backup_restic_version }}/restic_{{ backup_restic_version }}_linux_amd64.bz2
+    dest: /root/restic-{{ backup_restic_version }}.bz2
+    checksum: sha256:{{ backup_restic_bz2_sha256 }}
+    owner: root
+    group: root
+    mode: "0600"
+  when: backup_restic_pending
+
+- name: Unpack the pinned restic release
+  ansible.builtin.shell:
+    cmd: >-
+      bzip2 -dc /root/restic-{{ backup_restic_version }}.bz2
+      > /root/restic-{{ backup_restic_version }}
+    creates: /root/restic-{{ backup_restic_version }}
+  when: backup_restic_pending and not ansible_check_mode
+
+- name: Put restic in place
+  ansible.builtin.copy:
+    src: /root/restic-{{ backup_restic_version }}
+    dest: "{{ backup_restic_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: backup_restic_pending and not ansible_check_mode
+
+- name: Remove the unpacked release
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /root/restic-{{ backup_restic_version }}.bz2
+    - /root/restic-{{ backup_restic_version }}
+  when: backup_restic_pending and not ansible_check_mode
+
+- name: Read the digest of restic again
+  ansible.builtin.stat:
+    path: "{{ backup_restic_path }}"
+    checksum_algorithm: sha256
+  register: backup_restic_now
+  when: not ansible_check_mode
+
+- name: The restic on the node is the one this repository pins
+  ansible.builtin.assert:
+    that:
+      - backup_restic_now.stat.exists
+      - backup_restic_now.stat.checksum == backup_restic_sha256
+    fail_msg: >-
+      {{ backup_restic_path }} has digest {{ backup_restic_now.stat.checksum | default('none') }},
+      not the {{ backup_restic_sha256 }} of restic v{{ backup_restic_version }}
+  when: not ansible_check_mode
+
+# 0700 on each: the secrets, the staged copy of every client credential and
+# restic's cache of the repository index are for root alone
+- name: Make the directories the backup keeps its secrets, copies and cache in
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/skibidi, mode: "0755" }
+    - { path: "{{ backup_config_dir }}", mode: "0700" }
+    - { path: "{{ backup_state_dir }}", mode: "0700" }
+    - { path: "{{ backup_cache_dir }}", mode: "0700" }
+
+# Files rather than arguments or unit settings, which every local account can
+# read in /proc or through `systemctl show`. No trailing newline, because the
+# script reads the station password with a plain $(cat)
+- name: Hand the backup secrets over in files only root can read
+  ansible.builtin.copy:
+    dest: "{{ backup_config_dir }}/{{ item.name }}"
+    content: "{{ item.value }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - { name: rest-password, value: "{{ backup_rest_password }}" }
+    - { name: repository-password, value: "{{ backup_repository_password }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ backup_unit_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - skibidi-backup.service
+    - skibidi-backup.timer
+  notify: Reload systemd
+
+- name: Apply the unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+# Skipped in check mode: the unit it enables is written by this same play, and
+# a dry run deliberately does not write it
+- name: Enable the timer
+  ansible.builtin.systemd_service:
+    name: skibidi-backup.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+# Proven now rather than tonight: a station outside the tunnel, a wrong
+# password or an account the station does not know fails the deploy in front of
+# someone. The timeout bounds restic's own retries against a station that does
+# not answer
+- name: Create the repository unless it exists
+  ansible.builtin.command:
+    argv: ["{{ backup_script }}", init]
+  register: backup_init
+  changed_when: "'created the repository' in backup_init.stdout"
+  timeout: 300
+  when: not ansible_check_mode
+
+# Through the unit rather than the script, so the first push also proves the
+# unit. Only after the repository was created: every later deploy would add a
+# snapshot nobody asked for
+- name: Push the first snapshot, now
+  ansible.builtin.systemd_service:
+    name: skibidi-backup.service
+    state: started
+  when:
+    - not ansible_check_mode
+    - backup_init is changed

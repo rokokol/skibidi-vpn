@@ -2,6 +2,10 @@
 - name: Converge
   hosts: all
   become: true
+  vars:
+    # The station's server, pinned the way the roles pin what they download
+    station_version: "0.14.0"
+    station_tarball_sha256: 4c9c95bc079a0334e81fad379b19dc5c3353c71c2c88d652cafce2081c2b1c66
   pre_tasks:
     # The tunnel interface the metrics API binds to; molecule.yml says why
     - name: Stand a dummy interface in for the tunnel
@@ -14,6 +18,98 @@
         executable: /bin/bash
       register: converge_dummy
       changed_when: "'created' in converge_dummy.stdout"
+
+    # --- the backup station ---------------------------------------------------
+    #
+    # A real rest-server, run the way the station's contract describes it, so
+    # the push and the refused delete are asked of the server itself rather than
+    # of a stub. Started before the roles, because the backup role proves the
+    # repository at deploy time
+
+    - name: Stand a second dummy interface in for the station's tailnet address
+      ansible.builtin.shell:
+        cmd: >-
+          ip link show {{ station_interface }} >/dev/null 2>&1 && exit 0;
+          ip link add {{ station_interface }} type dummy &&
+          ip addr add {{ station_address }}/32 dev {{ station_interface }} &&
+          ip link set {{ station_interface }} up && echo created
+        executable: /bin/bash
+      register: converge_station_dummy
+      changed_when: "'created' in converge_station_dummy.stdout"
+
+    - name: Install what writes the station's htpasswd
+      ansible.builtin.apt:
+        name: apache2-utils
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Make the station's directory
+      ansible.builtin.file:
+        path: "{{ station_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Fetch the pinned rest-server release
+      ansible.builtin.get_url:
+        url: https://github.com/restic/rest-server/releases/download/v{{ station_version }}/rest-server_{{ station_version }}_linux_amd64.tar.gz
+        dest: /root/rest-server-{{ station_version }}.tar.gz
+        checksum: sha256:{{ station_tarball_sha256 }}
+        mode: "0600"
+
+    - name: Unpack rest-server
+      ansible.builtin.unarchive:
+        src: /root/rest-server-{{ station_version }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["rest-server_{{ station_version }}_linux_amd64/rest-server"]
+        extra_opts: [--strip-components=1]
+        creates: /usr/local/bin/rest-server
+
+    # The release tarball carries the binary as 0644
+    - name: Make rest-server executable
+      ansible.builtin.file:
+        path: /usr/local/bin/rest-server
+        owner: root
+        group: root
+        mode: "0755"
+
+    # bcrypt salts every hash afresh, so the file is written once per VM; the
+    # password goes in on stdin, never on the command line
+    - name: Give the node its account on the station
+      ansible.builtin.command:
+        argv: [htpasswd, -B, -i, -c, "{{ station_dir }}/.htpasswd", "{{ inventory_hostname }}"]
+        stdin: "{{ backup_secrets[inventory_hostname].rest_password }}"
+        creates: "{{ station_dir }}/.htpasswd"
+      no_log: true
+
+    - name: Install the station's unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/station-rest-server.service
+        content: |
+          [Unit]
+          Description=The backup station a test node pushes to
+
+          [Service]
+          ExecStart=/usr/local/bin/rest-server --path {{ station_dir }} --listen {{ station_address }}:8000 --append-only --private-repos
+        owner: root
+        group: root
+        mode: "0644"
+      register: converge_station_unit
+
+    - name: Start the station
+      ansible.builtin.systemd_service:
+        name: station-rest-server
+        state: "{{ 'restarted' if converge_station_unit.changed else 'started' }}"
+        daemon_reload: "{{ converge_station_unit.changed }}"
+
+    - name: Wait for the station to listen
+      ansible.builtin.wait_for:
+        host: "{{ station_address }}"
+        port: 8000
+        timeout: 30
   roles:
     - common
     - tailscale
@@ -24,6 +120,7 @@
     - nginx
     - metrics
     - reporter
+    - backup
     - checker
 
 # The same last play as site.yml. The VM never joins a tailnet, so this proves

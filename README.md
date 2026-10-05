@@ -36,7 +36,7 @@ One registry, two consumers. A node file must be `chmod 600`; the inventory refu
 
 ## Secrets
 
-The roles need two secrets and the registry holds neither: a Tailscale auth key, read only on a node that has not joined yet, and a Cloudflare token for the DNS-01 challenge. They travel in a vault file passed to the play:
+The roles need two secrets and the registry holds neither: a Tailscale auth key, read only on a node that has not joined yet, and a Cloudflare token for the DNS-01 challenge. The optional backup below adds two more per node that uses it. They travel in a vault file passed to the play:
 
 ```sh
 cp vault.example.yml vault.yml          # git-ignored
@@ -45,6 +45,51 @@ ansible-playbook site.yml -e @vault.yml --ask-vault-pass
 ```
 
 The panel needs no credential from this repository at all: the weekly report reads the panel's database on the master, opened read-only. The panel's API token belongs to the `3x-ui-admin-skill`, issued in the panel's UI under its own name
+
+## Backup
+
+The backup channel is optional and off by default. A node whose file names no backup station gets no restic, no timer, no unit and no secret, and its checks say nothing about a backup; a deploy also removes what an earlier one installed. A fleet without a receiver, or without a tailnet at all, deploys and checks clean
+
+A node that names a station pushes a restic snapshot to it on a timer:
+
+- a copy of the panel's database and of the metric store, each taken with `sqlite3 .backup` into a directory only root can read, and checked for integrity before it leaves
+- on the master, the weekly report's state as well
+
+The certificate in `/root/cert` and acme.sh's home `/root/.acme.sh` are not backed up: a rebuilt node issues a new wildcard over DNS-01 with the token from the vault, and a copy would put the wildcard's private key on one more machine. The Tailscale identity is not backed up either: a restored copy would collide with the original node on the tailnet, while a rebuilt node joins again with the auth key
+
+### The receiver
+
+A [rest-server](https://github.com/restic/rest-server) that the node can reach, set up like this:
+
+- one htpasswd account per node, kept to its own repository by `--private-repos`, so the repository path is the account name
+- `--append-only`, so a node can add snapshots and never remove one. Nothing on the node prunes; retention is the receiver's business
+- plain HTTP only inside the tunnel ranges, where WireGuard already encrypts. Anywhere else the URL must be `https://`, which is accepted wherever the receiver is
+
+The repository is encrypted with a password that the node and the owner know and the receiver does not. Keep a copy of it away from the fleet: no snapshot can be read without it
+
+### Turning it on for one node
+
+In the node's file, the receiver's base URL, and the account when it is not the node's name:
+
+```toml
+backup_url = "http://<station address>:<port>"
+# backup_user = "<account on the station>"
+```
+
+In `vault.yml`, one entry under the node's name:
+
+```yaml
+backup_secrets:
+  <node name>:
+    rest_password: <the node's password on the station>
+    repository_password: <the restic repository password>
+```
+
+The next deploy installs the pinned restic and the timer, creates the repository unless it already exists, and pushes the first snapshot. A deploy fails before restic, the secrets or the timer arrive when the vault has no entry for the node, or when the URL is `http://` outside the tunnel. To leave the channel off, set nothing: the vault entry is read only for a node with `backup_url`. To turn it off again, remove `backup_url` and deploy. Restoring is restic's own `restore` against the same repository, with the same two passwords
+
+### What the checker watches
+
+Only on a node with `backup_url`: the timer is enabled and has fired within its interval, the station still passes the HTTP rule above, and the secrets and the staged copies stay readable by root alone. A failed push raises the same alert as any other failed unit
 
 ## Use
 
@@ -83,10 +128,12 @@ Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEV
 | `firewall` | ufw policy, the three public ports, and hiding the tunnel's direct path |
 | `tailscale` | the private network the panel is reachable on, and Tailscale SSH where a node opts in |
 | `xui` | the pinned panel, bound to the tunnel address, asserted afterwards |
+| `geodata` | the geo databases Xray routes by, refreshed and checked against the digests their releases publish |
 | `certs` | a wildcard certificate over DNS-01, so only the wildcard reaches Certificate Transparency |
 | `nginx` | port 80, and the optional egress-address echo |
 | `fail2ban` | the sshd, recidive and panel address-limit jails, each proven to read the log it is meant to |
 | `metrics` | a ten-minute sampler of what the panel does not know, served read-only on the tailnet by the [metrics API](docs/metrics-api.md) |
 | `reporter` | the Monday letter, built from the panel's database and the fleet's metric stores; master only |
+| `backup` | the optional push of the panel's database, the metric store and the report's state to a restic receiver the node names; off by default, see [Backup](#backup) |
 | `checker` | the half-hourly self-check, mailed on failure straight past the master |
 | `warp` | Cloudflare WARP as a local proxy, with a watchdog that counts its own restarts |

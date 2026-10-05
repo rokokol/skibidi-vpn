@@ -20,6 +20,9 @@
   vars:
     verify_metrics: "{{ lookup('ansible.builtin.file', '../../roles/metrics/defaults/main.yml') | from_yaml }}"
     verify_api: http://{{ metrics_host }}:{{ verify_metrics.metrics_api_port }}
+    verify_backup: "{{ lookup('ansible.builtin.file', '../../roles/backup/defaults/main.yml') | from_yaml }}"
+    verify_staging: "{{ verify_backup.backup_state_dir }}/staging"
+    verify_snapshots: "{{ station_dir }}/{{ inventory_hostname }}/snapshots"
 
   tasks:
     - name: Read the effective congestion control and queue discipline
@@ -446,3 +449,251 @@
       ansible.builtin.assert:
         that: verify_letter.rc == 0
         fail_msg: "{{ verify_letter.stdout }}"
+
+    # --- the backup ----------------------------------------------------------
+    #
+    # Pushed for real to the rest-server converge started, and judged on the
+    # station's own disk: a snapshot file that arrives there is a push, whatever
+    # the client says about it
+
+    - name: Read the backup timer
+      ansible.builtin.systemd_service:
+        name: skibidi-backup.timer
+      register: verify_backup_timer
+
+    - name: The backup timer is installed, enabled and waiting
+      ansible.builtin.assert:
+        that:
+          - verify_backup_timer.status.LoadState == 'loaded'
+          - verify_backup_timer.status.UnitFileState == 'enabled'
+          - verify_backup_timer.status.ActiveState == 'active'
+        fail_msg: >-
+          skibidi-backup.timer is {{ verify_backup_timer.status.LoadState }},
+          {{ verify_backup_timer.status.UnitFileState | default('no unit file') }},
+          {{ verify_backup_timer.status.ActiveState }}
+
+    - name: Count the snapshots on the station's disk
+      ansible.builtin.find:
+        paths: "{{ verify_snapshots }}"
+      register: verify_snapshots_before
+
+    - name: Push a backup through the unit
+      ansible.builtin.systemd_service:
+        name: skibidi-backup.service
+        state: started
+
+    - name: Count the snapshots on the station's disk again
+      ansible.builtin.find:
+        paths: "{{ verify_snapshots }}"
+      register: verify_snapshots_after
+
+    - name: The push left one more snapshot on the station
+      ansible.builtin.assert:
+        that: verify_snapshots_after.matched == verify_snapshots_before.matched + 1
+        fail_msg: >-
+          the station held {{ verify_snapshots_before.matched }} snapshot(s) before the push
+          and {{ verify_snapshots_after.matched }} after it
+
+    # The panel's database and the metric store, each with a table only the
+    # real store has: an empty file passes an integrity check too
+    - name: Read the staged copies back
+      ansible.builtin.command:
+        argv: [sqlite3, "{{ verify_staging }}{{ item.store }}", "pragma integrity_check; select count(*) > 0 from {{ item.table }};"]
+      loop:
+        - { store: "{{ xui_db }}", table: settings }
+        - { store: "{{ verify_metrics.metrics_db_dir }}/metrics.db", table: samples }
+      register: verify_staged
+      changed_when: false
+      failed_when: false
+
+    - name: Each staged copy is a whole SQLite store with its data in it
+      ansible.builtin.assert:
+        that: item.rc == 0 and item.stdout_lines == ['ok', '1']
+        fail_msg: "{{ item.item.store }}: rc {{ item.rc }}, {{ item.stdout_lines + item.stderr_lines }}"
+      loop: "{{ verify_staged.results }}"
+      loop_control:
+        label: "{{ item.item.store }}"
+
+    - name: Read the modes of the secrets and the copies
+      ansible.builtin.shell:
+        cmd: >-
+          stat -c '%a:%U:%G' {{ verify_backup.backup_config_dir }}/rest-password
+          {{ verify_backup.backup_config_dir }}/repository-password;
+          find {{ verify_backup.backup_config_dir }} {{ verify_backup.backup_state_dir }}
+          \( -perm /077 -o ! -user root \)
+        executable: /bin/bash
+      register: verify_backup_modes
+      changed_when: false
+
+    - name: The secrets and the staged copies are readable by root alone
+      ansible.builtin.assert:
+        that: verify_backup_modes.stdout_lines == ['600:root:root', '600:root:root']
+        fail_msg: "{{ verify_backup_modes.stdout_lines }}"
+
+    # What any local account can read about the unit, and what the journal
+    # kept of every run so far. The values are the scenario's own passwords;
+    # the registered output is hidden, because a leak would print them
+    - name: Read the unit's properties
+      ansible.builtin.systemd_service:
+        name: skibidi-backup.service
+      register: verify_backup_unit
+      no_log: true
+
+    - name: Read the unit's files, the script and the journal
+      ansible.builtin.shell:
+        cmd: >-
+          cat /etc/systemd/system/skibidi-backup.service /etc/systemd/system/skibidi-backup.timer
+          {{ verify_backup.backup_script }};
+          journalctl --no-pager -o cat -u skibidi-backup.service
+        executable: /bin/bash
+      register: verify_backup_files
+      changed_when: false
+      no_log: true
+
+    - name: Neither password appears outside its root-only file
+      vars:
+        verify_backup_public: "{{ verify_backup_unit.status | to_json }}{{ verify_backup_files.stdout }}"
+      ansible.builtin.assert:
+        that:
+          - "'pushed a snapshot' in verify_backup_public"
+          - "'skibidi-backup run' in verify_backup_public"
+          - backup_secrets[inventory_hostname].rest_password not in verify_backup_public
+          - backup_secrets[inventory_hostname].repository_password not in verify_backup_public
+        fail_msg: a backup password is in the unit, the script or the journal, or the journal holds no push at all
+      no_log: true
+
+    # Append-only is the station's promise; this asks the server with the
+    # node's own credentials, the way a node in someone else's hands would
+    - name: Ask the station, as the node, to forget the newest snapshot
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          export RESTIC_REST_PASSWORD; RESTIC_REST_PASSWORD=$(cat {{ verify_backup.backup_config_dir }}/rest-password);
+          id=$({{ verify_backup.backup_restic_path }} snapshots --json --latest 1
+          | python3 -c 'import json, sys; print(json.load(sys.stdin)[-1]["id"])');
+          {{ verify_backup.backup_restic_path }} forget "$id"
+        executable: /bin/bash
+      environment:
+        RESTIC_REPOSITORY: rest:{{ backup_url }}/{{ inventory_hostname }}/
+        RESTIC_REST_USERNAME: "{{ inventory_hostname }}"
+        RESTIC_PASSWORD_FILE: "{{ verify_backup.backup_config_dir }}/repository-password"
+        RESTIC_CACHE_DIR: "{{ verify_backup.backup_cache_dir }}"
+      register: verify_forget
+      changed_when: false
+      failed_when: false
+
+    - name: Count the snapshots on the station's disk after the attempt
+      ansible.builtin.find:
+        paths: "{{ verify_snapshots }}"
+      register: verify_snapshots_kept
+
+    # Both clauses: restic must have reached the server and been refused, and
+    # the file must still be there. A forget that never ran fails the first
+    - name: The station refused the delete and kept the snapshot
+      ansible.builtin.assert:
+        that:
+          - verify_forget.rc != 0
+          - "'403' in verify_forget.stderr"
+          - verify_snapshots_kept.matched == verify_snapshots_after.matched
+        fail_msg: >-
+          forget exited {{ verify_forget.rc }} ({{ verify_forget.stderr_lines[-3:] }}); the
+          station holds {{ verify_snapshots_kept.matched }} of {{ verify_snapshots_after.matched }}
+
+    - name: Run the node's own checks
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/skibidi-check]
+      register: verify_backup_check
+      changed_when: false
+      failed_when: false
+
+    - name: The checker watches the backup and passes
+      ansible.builtin.assert:
+        that:
+          - verify_backup_check.rc == 0
+          - verify_backup_check.stdout_lines | select('search', '^ok +the backup timer is enabled') | list | length == 1
+          - verify_backup_check.stdout_lines | select('search', '^ok +skibidi-backup\.timer (fired|has not fired)') | list | length == 1
+          - verify_backup_check.stdout_lines | select('search', '^ok +the backup station .* inside the tunnel, where plain HTTP is allowed') | list | length == 1
+          - verify_backup_check.stdout_lines | select('search', '^ok +the backup secrets .* root alone') | list | length == 1
+        fail_msg: "{{ verify_backup_check.stdout_lines | select('search', '^FAIL|backup') | list }}"
+
+    # A registry edit that points the node at plain HTTP off the tunnel. The
+    # address is a documentation one, so nothing could answer it anyway: the
+    # refusal has to come from the guard, before restic is asked
+    - name: Deploy the backup towards plain HTTP outside the tunnel
+      block:
+        - name: Run the role with an http:// station outside the tunnel ranges
+          ansible.builtin.include_role:
+            name: backup
+          vars:
+            backup_url: http://198.51.100.7:8000
+            backup_tunnel_ranges: "{{ verify_metrics.metrics_tunnel_ranges }}"
+
+        - name: The deploy went on past the refused station
+          ansible.builtin.fail:
+            msg: the backup role accepted plain HTTP to a station outside the tunnel
+      rescue:
+        - name: The deploy stopped at the guard, which names the way out
+          ansible.builtin.assert:
+            that:
+              - "'outside the tunnel' in ansible_failed_result.stderr | default('')"
+              - "'https://' in ansible_failed_result.stderr | default('')"
+            fail_msg: "{{ ansible_failed_result.msg | default('') }} {{ ansible_failed_result.stderr | default('') }}"
+
+    # The skip path, last because it takes the backup away: the same role with
+    # no station leaves no unit, no secret and no copy behind
+    - name: Take the station out of the node's configuration
+      ansible.builtin.include_role:
+        name: backup
+      vars:
+        backup_url: ""
+
+    - name: Look for anything the backup left
+      ansible.builtin.shell:
+        cmd: >-
+          ls -d /etc/systemd/system/skibidi-backup.* {{ verify_backup.backup_config_dir }} {{ verify_backup.backup_state_dir }}
+          {{ verify_backup.backup_cache_dir }} {{ verify_backup.backup_script }}
+          {{ verify_backup.backup_restic_path }} 2>/dev/null;
+          true
+        executable: /bin/bash
+      register: verify_backup_left
+      changed_when: false
+
+    - name: Nothing of the backup is left on a node that names no station
+      ansible.builtin.assert:
+        that: verify_backup_left.stdout | trim | length == 0
+        fail_msg: "{{ verify_backup_left.stdout_lines }}"
+
+    - name: Let systemd forget the removed units
+      ansible.builtin.meta: flush_handlers
+
+    # The checker on the VM was rendered for a node with a station, so its own
+    # backup section still asks. What this proves is the shared timer loop: it
+    # skips a watched timer that is not installed instead of failing on it. The
+    # section itself renders to nothing without a station, in tests/test_backup.py
+    - name: Run the node's own checks without the backup
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/skibidi-check]
+      register: verify_unbacked_check
+      changed_when: false
+      failed_when: false
+
+    - name: The timer loop says nothing about a timer that is not installed
+      ansible.builtin.assert:
+        that: verify_unbacked_check.stdout_lines | select('search', 'skibidi-backup\.timer') | list | length == 0
+        fail_msg: "{{ verify_unbacked_check.stdout_lines | select('search', 'skibidi-backup') | list }}"
+
+    # And back, so the scenario can be verified again without a converge. The
+    # repository is still on the station, so this also proves a second init
+    # finds it rather than failing
+    - name: Name the station again
+      ansible.builtin.include_role:
+        name: backup
+      vars:
+        backup_tunnel_ranges: "{{ verify_metrics.metrics_tunnel_ranges }}"
+
+    - name: The backup is back and found its repository
+      ansible.builtin.assert:
+        that:
+          - backup_init is not changed
+          - "'the repository exists' in backup_init.stdout"
+        fail_msg: "{{ backup_init.stdout | default('init did not run') }}"

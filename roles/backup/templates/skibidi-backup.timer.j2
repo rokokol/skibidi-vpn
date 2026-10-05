@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Push this node's backup to the station every day
+
+[Timer]
+OnCalendar={{ backup_on_calendar }}
+# A node that was off through its window pushes when it comes back
+Persistent=true
+RandomizedDelaySec={{ backup_randomized_delay }}
+AccuracySec=15min
+
+[Install]
+WantedBy=timers.target

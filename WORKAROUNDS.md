@@ -71,3 +71,25 @@ Run it on the node after switching its core from the panel's UI and connecting a
 **Removal check:** verification reaching the core's own updater. The day it checks digests, this role hands the job over and the fleet gets hot reloads for free — the role's remaining value would be the conditional fetch alone, which is not worth a timer
 
 **Upstream:** [MHSanaei/3x-ui#6404](https://github.com/MHSanaei/3x-ui/pull/6404) verifies the panel's own geofile download against the published digest; merged and released. It covers the panel's download, not the core's updater
+
+---
+
+## restic comes from its release, not from Ubuntu
+
+**Where:** the restic tasks in `roles/backup/tasks/present.yml`, with the version and both digests in `roles/backup/defaults/main.yml`; only on a node that names a backup station
+
+**Symptom it prevents:** with Ubuntu's restic, the backup script cannot tell a repository that does not exist yet from one it cannot open. A wrong repository password or a station that refuses the account would then be answered with `restic init`, and the real fault would hide behind a second error
+
+**Why it happens:** the script decides whether to create the repository by the exit code of `restic cat config`. restic returns 10 for a repository that does not exist only since 0.17.0 ([restic/restic#956](https://github.com/restic/restic/issues/956)). Ubuntu 24.04 ships 0.16.4 and 22.04 ships 0.12.1, and both return 1 for every failure. 22.04 also predates 0.16.1, which first reads the station account from `RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD`, so it would need the password in the repository URL
+
+**Why this works:** the role downloads the official `linux_amd64` build, checks the archive against the digest the release publishes in `SHA256SUMS`, and holds the installed binary to its own digest on every run, the same way the `xui` role holds the panel binary
+
+**Removal check:** the Ubuntu release every node runs ships restic 0.17.0 or later
+
+```sh
+apt-cache policy restic | awk '/Candidate/ {print $2}'
+```
+
+Run it on a node of each Ubuntu release in the fleet. Every answer 0.17.0 or later -> the role can install Ubuntu's package instead, and drop the download and both digests. The binary digest check goes with them, because the package's digest changes with every security update
+
+**Upstream:** nothing to report; a stable Ubuntu release does not take new upstream versions

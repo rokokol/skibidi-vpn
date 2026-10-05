@@ -23,7 +23,8 @@ checker_master_failures_before_alert: 3
 
 # Timers whose silence is itself the failure. systemd records when each last
 # fired; a timer that has not fired in well over its own interval is a mechanism
-# that stopped without saying so
+# that stopped without saying so. A timer that is not installed is skipped, so a
+# node without an optional mechanism checks nothing for it
 checker_watched_timers:
   - name: skibidi-check.timer
     max_silence_hours: 2
@@ -31,6 +32,10 @@ checker_watched_timers:
     max_silence_hours: 48
   - name: skibidi-metrics.timer
     max_silence_hours: 2
+  # Daily with an hour of scatter, so a gap past 25 hours is a missed day.
+  # Installed only where the optional backup channel is on
+  - name: skibidi-backup.timer
+    max_silence_hours: 30
 
 # Units that must be running for the node to be doing its job
 checker_required_units: [x-ui, nginx, fail2ban, tailscaled]

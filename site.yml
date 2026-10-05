@@ -19,6 +19,10 @@
     - metrics
     - role: reporter
       when: "'master' in group_names and reporter_to | length > 0"
+    # After every role whose store it copies, and before the checker, which
+    # watches its timer. Not gated here: a node with no station runs it to
+    # remove what an earlier deploy installed
+    - backup
     - checker
 
 # Last and on its own: switching Tailscale SSH can take over the SSH session a

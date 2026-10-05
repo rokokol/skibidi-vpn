@@ -102,6 +102,13 @@
                 jinja2
               ]
             ))
+            # The backup tests stage real SQLite stores through the rendered
+            # script, push them with a real restic to a real rest-server, and
+            # hold the script to shellcheck
+            sqlite
+            shellcheck
+            restic
+            restic-rest-server
           ];
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
           SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";

@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Push this node's backup to the station
+Wants=network-online.target
+After=network-online.target tailscaled.service
+# %N, not %n: %n already ends in .service
+OnFailure=skibidi-alert@%N.service
+
+[Service]
+Type=oneshot
+# No Environment= and no EnvironmentFile= here: `systemctl show` prints both to
+# any local account, so the script reads the secrets from root-only files itself
+ExecStart={{ backup_script }} run
+TimeoutStartSec={{ backup_timeout }}
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+# The push is bulk work and the node is a router first
+Nice=10
+IOSchedulingClass=idle

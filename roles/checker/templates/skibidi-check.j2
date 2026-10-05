@@ -358,6 +358,42 @@ PYEOF
 fi
 {% endif %}
 
+# --- the backup -------------------------------------------------------------
+#
+# Only where the optional channel is on. Plain HTTP is accepted for a station
+# inside the tunnel alone, HTTPS anywhere; the backup script owns that rule and
+# refuses to push past it, and asking it here turns a registry edit red within
+# the half hour instead of at the next push. The loop over the watched timers
+# skips a timer that is not installed, so the timer is checked here by name
+
+{% if backup_url | default('') | length > 0 %}
+if systemctl is-enabled --quiet skibidi-backup.timer 2>/dev/null \
+    && systemctl is-active --quiet skibidi-backup.timer; then
+    ok "the backup timer is enabled and waiting"
+else
+    fail "the backup timer is not enabled and running; nothing pushes this node's backup"
+fi
+
+if backup_target=$({{ backup_script }} target 2>&1); then
+    ok "$backup_target"
+else
+    fail "${backup_target:-the backup station could not be checked}"
+fi
+
+# The staged copy holds every client credential, and the two password files
+# open every snapshot the station keeps
+if [ -s {{ backup_config_dir }}/rest-password ] && [ -s {{ backup_config_dir }}/repository-password ]; then
+    backup_open=$(find {{ backup_config_dir }} {{ backup_state_dir }} \( -perm /077 -o ! -user root \) 2>/dev/null | wc -l)
+    if [ "$backup_open" -eq 0 ]; then
+        ok "the backup secrets and the staged copies are readable by root alone"
+    else
+        fail "$backup_open path(s) under {{ backup_config_dir }} or {{ backup_state_dir }} are open beyond root"
+    fi
+else
+    fail "the backup secrets are missing from {{ backup_config_dir }}"
+fi
+{% endif %}
+
 # --- the metrics API --------------------------------------------------------
 #
 # The API has no authentication, so who can reach it is the whole of its

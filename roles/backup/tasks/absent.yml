@@ -1,0 +1,26 @@
+---
+- name: Look for a backup timer an earlier deploy installed
+  ansible.builtin.stat:
+    path: "{{ backup_unit_dir }}/skibidi-backup.timer"
+  register: backup_timer_unit
+
+- name: Stop the backup timer
+  ansible.builtin.systemd_service:
+    name: skibidi-backup.timer
+    state: stopped
+    enabled: false
+  when: backup_timer_unit.stat.exists
+
+- name: Remove the backup units, its secrets and its copies
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ backup_unit_dir }}/skibidi-backup.timer"
+    - "{{ backup_unit_dir }}/skibidi-backup.service"
+    - "{{ backup_script }}"
+    - "{{ backup_config_dir }}"
+    - "{{ backup_state_dir }}"
+    - "{{ backup_cache_dir }}"
+    - "{{ backup_restic_path }}"
+  notify: Reload systemd

@@ -1,0 +1,12 @@
+---
+# The channel is optional. A node with no backup_url still runs the role, which
+# then installs nothing and removes what an earlier deploy left: a timer that
+# pushes to a station nobody names any more fails every night, and its
+# credentials stay on the node
+- name: Remove the backup from a node that names no station
+  ansible.builtin.import_tasks: absent.yml
+  when: backup_url | length == 0
+
+- name: Push this node's backup to its station
+  ansible.builtin.import_tasks: present.yml
+  when: backup_url | length > 0

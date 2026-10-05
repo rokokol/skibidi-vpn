@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Needs bash 4.4, which expands an empty array under `set -u`, and runs on the
+# node only, with restic, sqlite3 and python3.
+# The secrets stay in files: restic reads the repository password from its own
+# file, and the station password reaches restic through the environment of this
+# process alone, which only root can read. Nothing here may print either one,
+# and nothing here may run under `set -x`
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Push this node's backup to the station's restic REST server
+
+  skibidi-backup run       copy each store, then push a snapshot
+  skibidi-backup init      create the repository unless it exists
+  skibidi-backup target    check that the station may be reached as configured
+  skibidi-backup help      show this help
+
+Every store is copied with sqlite3 .backup into a directory only root can
+read, and the copy must pass an integrity check before it is pushed. Plain
+HTTP is accepted only for a station that resolves inside the tunnel, and
+HTTPS anywhere; run and init refuse any other station, and target answers
+that question alone
+
+Exit codes: 0 done, 1 failed or refused, 2 bad usage
+EOF
+}
+
+die() {
+    printf 'skibidi-backup: %s\n' "$*" >&2
+    exit 1
+}
+
+restic={{ backup_restic_path | quote }}
+config={{ backup_config_dir | quote }}
+staging={{ (backup_state_dir ~ '/staging') | quote }}
+station={{ backup_url | quote }}
+databases=({{ backup_databases | map('quote') | join(' ') }})
+directories=({{ backup_directories | map('quote') | join(' ') }})
+excludes=({{ backup_excludes | map('quote') | join(' ') }})
+
+# HTTPS carries its own encryption and is accepted anywhere. Plain HTTP is
+# accepted only inside the tunnel, which encrypts below it. A name resolves
+# wherever DNS says today, so it is resolved on every call and each address it
+# gives must be inside the ranges
+target() {
+    python3 - "$station" {{ backup_tunnel_ranges | map('quote') | join(' ') }} <<'PYEOF'
+import ipaddress
+import socket
+import sys
+from urllib.parse import urlsplit
+
+url, ranges = sys.argv[1], [ipaddress.ip_network(r) for r in sys.argv[2:]]
+parts = urlsplit(url)
+if parts.username or parts.password:
+    sys.exit("the backup station URL carries a credential; the password belongs in vault.yml")
+if parts.scheme == "https" and parts.hostname:
+    print(f"the backup station {parts.hostname} is reached over HTTPS")
+    sys.exit(0)
+if parts.scheme != "http" or not parts.hostname:
+    sys.exit(f"the backup station {url!r} is neither an http:// nor an https:// URL")
+host = parts.hostname
+try:
+    found = {ipaddress.ip_address(host)}
+except ValueError:
+    try:
+        found = {ipaddress.ip_address(info[4][0].split("%")[0])
+                 for info in socket.getaddrinfo(host, None)}
+    except socket.gaierror as exc:
+        sys.exit(f"the backup station {host} does not resolve: {exc}")
+outside = sorted(str(address) for address in found
+                 if not any(address in network for network in ranges))
+if outside:
+    sys.exit(f"the backup station {host} is at {', '.join(outside)}, outside the tunnel; "
+             "plain HTTP is refused there, use an https:// URL")
+print(f"the backup station {host} is inside the tunnel, where plain HTTP is allowed")
+PYEOF
+}
+
+connect() {
+    target >/dev/null
+    export RESTIC_REPOSITORY={{ backup_repository | quote }}
+    export RESTIC_REST_USERNAME={{ backup_user | quote }}
+    export RESTIC_PASSWORD_FILE="$config/repository-password"
+    export RESTIC_CACHE_DIR={{ backup_cache_dir | quote }}
+    RESTIC_REST_PASSWORD=$(cat "$config/rest-password") || die "cannot read $config/rest-password"
+    export RESTIC_REST_PASSWORD
+}
+
+# restic 0.17 and later answer 10 for a repository that does not exist. Any
+# other failure, a wrong password included, must stop here: a second `init`
+# beside a repository it cannot open would hide the real fault
+init() {
+    connect
+    local rc=0 err
+    err=$("$restic" cat config 2>&1 >/dev/null) || rc=$?
+    case $rc in
+        0) echo "the repository exists" ;;
+        10)
+            "$restic" init --quiet >/dev/null
+            echo "created the repository"
+            ;;
+        *) die "cannot open the repository (restic exit $rc): $err" ;;
+    esac
+}
+
+stage() {
+    local source copy
+    umask 077
+    rm -rf "$staging"
+    mkdir -p "$staging"
+    for source in "${databases[@]}"; do
+        [[ -f "$source" ]] || die "$source is missing; it is declared as a store to back up"
+        copy=$staging$source
+        mkdir -p "${copy%/*}"
+        # The owner may hold a write lock at that moment; wait for it rather
+        # than fail the night's push
+        sqlite3 -cmd '.timeout 30000' "$source" ".backup '$copy'"
+        [[ "$(sqlite3 "$copy" 'pragma integrity_check')" == ok ]] ||
+            die "the copy of $source fails its integrity check"
+    done
+    for source in "${directories[@]}"; do
+        [[ -d "$source" ]] || die "$source is missing; it is declared as a directory to back up"
+    done
+}
+
+run() {
+    local exclude flags=()
+    init
+    stage
+    for exclude in "${excludes[@]}"; do
+        flags+=(--exclude "$exclude")
+    done
+    "$restic" backup --quiet --host {{ inventory_hostname | quote }} --tag skibidi-backup \
+        "${flags[@]}" "$staging" "${directories[@]}"
+    echo "pushed a snapshot to $station"
+}
+
+no_arguments() {
+    (($# == 0)) || {
+        usage >&2
+        exit 2
+    }
+}
+
+cmd=${1:-}
+shift || true
+case "$cmd" in
+    run)
+        no_arguments "$@"
+        run
+        ;;
+    init)
+        no_arguments "$@"
+        init
+        ;;
+    target)
+        no_arguments "$@"
+        target
+        ;;
+    -h | --help | help) usage ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

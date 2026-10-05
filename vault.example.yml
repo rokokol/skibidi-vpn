@@ -14,3 +14,14 @@ tailscale_auth_key: replace-me
 # Cloudflare API token scoped to Zone:DNS:Edit on the one zone the wildcard
 # lives in. acme.sh keeps it in its own account.conf after the first issue
 certs_cf_token: replace-me
+
+# Optional: read only for a node that sets backup_url in its file, so a fleet
+# without the backup channel may delete this block or leave it as it is. One
+# entry per such node, keyed by the node name. rest_password is the node's
+# account on the station, the plain form of its line in the station's htpasswd.
+# repository_password encrypts the node's restic repository: the station never
+# sees it, and no snapshot can be read without it
+backup_secrets:
+  example:
+    rest_password: replace-me
+    repository_password: replace-me

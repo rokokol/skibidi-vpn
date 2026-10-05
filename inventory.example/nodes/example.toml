@@ -52,5 +52,14 @@ metrics_host = "100.72.0.4"
 # from where it sits, opts out here
 # common_manage_resolver = false
 
-# Secrets never live in this file. tailscale_auth_key and certs_cf_token come
-# from vault.yml, passed with -e; see vault.example.yml
+# Optional, and off unless set: the restic REST server this node pushes a daily
+# backup to. http:// is accepted only for an address inside the tunnel, https://
+# anywhere. The station's account for the node is the node name unless
+# backup_user says otherwise, and its two passwords come from vault.yml. Without
+# backup_url the backup role installs nothing and removes what an earlier deploy
+# left
+# backup_url = "http://100.72.0.9:8000"
+# backup_user = "example"
+
+# Secrets never live in this file. tailscale_auth_key, certs_cf_token and the
+# backup passwords come from vault.yml, passed with -e; see vault.example.yml

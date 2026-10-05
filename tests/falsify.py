@@ -31,6 +31,10 @@ LEGACY = "roles/metrics/tasks/legacy-ssh-export.yml"
 CHECK = "roles/checker/templates/skibidi-check.j2"
 REPORT_CONFIG = "roles/reporter/templates/report.toml.j2"
 TAILSCALE_SSH = "roles/tailscale/tasks/ssh.yml"
+BACKUP = "roles/backup/templates/skibidi-backup.j2"
+BACKUP_SERVICE = "roles/backup/templates/skibidi-backup.service.j2"
+BACKUP_DEFAULTS = "roles/backup/defaults/main.yml"
+CHECK_DEFAULTS = "roles/checker/defaults/main.yml"
 
 
 @dataclass
@@ -252,6 +256,128 @@ DEFECTS = [
         find="  when: (tailscale_prefs.stdout | from_json).RunSSH | default(false) | bool != tailscale_ssh | bool",
         replace="  when: true",
         consequence="every deploy reschedules the switch and is never idempotent",
+    ),
+    Defect(
+        name="backup/silent-failure",
+        file=BACKUP_SERVICE,
+        find="OnFailure=skibidi-alert@%N.service\n",
+        replace="",
+        consequence="a backup that fails every night mails nobody",
+    ),
+    Defect(
+        name="backup/secret-in-unit",
+        file=BACKUP_SERVICE,
+        find="ExecStart={{ backup_script }} run\n",
+        replace="Environment=RESTIC_REST_PASSWORD={{ backup_rest_password }}\nExecStart={{ backup_script }} run\n",
+        consequence="every local account reads the station password with systemctl show",
+    ),
+    Defect(
+        name="backup/secret-in-url",
+        file=BACKUP_DEFAULTS,
+        find="backup_repository: \"rest:{{ backup_url | regex_replace",
+        replace="backup_repository: \"rest:{{ backup_url"
+                " | replace('://', '://' ~ backup_user ~ ':' ~ backup_rest_password ~ '@')"
+                " | regex_replace",
+        consequence="the station password sits in the script and in every restic error",
+    ),
+    Defect(
+        name="backup/init-every-run",
+        file=BACKUP,
+        find='        0) echo "the repository exists" ;;',
+        replace='        0) "$restic" init --quiet >/dev/null ;;',
+        consequence="every run tries to create a repository that already exists",
+    ),
+    Defect(
+        name="backup/init-on-any-error",
+        file=BACKUP,
+        find="        10)\n",
+        replace="        *)\n",
+        consequence="a wrong password is answered with a second repository attempt instead of an alert",
+    ),
+    Defect(
+        name="backup/file-copy",
+        file=BACKUP,
+        find="sqlite3 -cmd '.timeout 30000' \"$source\" \".backup '$copy'\"",
+        replace='cp "$source" "$copy"',
+        consequence="the staged panel database misses whatever is still in its write-ahead log",
+    ),
+    Defect(
+        name="backup/integrity-unchecked",
+        file=BACKUP,
+        find="[[ \"$(sqlite3 \"$copy\" 'pragma integrity_check')\" == ok ]] ||",
+        replace="true ||",
+        consequence="a store with a damaged page is pushed as if it could be restored",
+    ),
+    Defect(
+        name="backup/staged-world-readable",
+        file=BACKUP,
+        find="    umask 077\n",
+        replace="    umask 022\n",
+        consequence="the staged copy of every client credential is readable by every account",
+    ),
+    Defect(
+        name="backup/guard-skipped",
+        file=BACKUP,
+        find="    target >/dev/null\n",
+        replace="",
+        consequence="plain HTTP to a station outside the tunnel carries the database in the clear",
+    ),
+    Defect(
+        name="backup/guard-blind",
+        file=BACKUP,
+        find="if not any(address in network for network in ranges))",
+        replace="if False)",
+        consequence="a station outside the tunnel passes the guard",
+    ),
+    Defect(
+        name="backup/https-refused",
+        file=BACKUP,
+        find='if parts.scheme == "https" and parts.hostname:',
+        replace="if False:",
+        consequence="a station behind TLS outside the tunnel is refused, which the contract allows",
+    ),
+    Defect(
+        name="backup/shared-repository",
+        file=BACKUP_DEFAULTS,
+        find="}}/{{ backup_user }}/\"",
+        replace="}}/\"",
+        consequence="every node pushes to the station's root, which a private-repos station refuses",
+    ),
+    Defect(
+        name="check/backup-timer-blind",
+        file=CHECK,
+        find="if systemctl is-enabled --quiet skibidi-backup.timer 2>/dev/null \\\n"
+             "    && systemctl is-active --quiet skibidi-backup.timer; then",
+        replace="if true; then",
+        consequence="a node whose backup timer was disabled reads as healthy",
+    ),
+    Defect(
+        name="check/backup-target-blind",
+        file=CHECK,
+        find="if backup_target=$({{ backup_script }} target 2>&1); then",
+        replace="if backup_target=$(echo inside); then",
+        consequence="a registry edit that moves the station off the tunnel goes unnoticed until the push",
+    ),
+    Defect(
+        name="check/backup-modes-blind",
+        file=CHECK,
+        find="    backup_open=$(find {{ backup_config_dir }} {{ backup_state_dir }} \\( -perm /077 -o ! -user root \\) 2>/dev/null | wc -l)",
+        replace="    backup_open=0",
+        consequence="a backup secret readable by every account goes unnoticed",
+    ),
+    Defect(
+        name="check/backup-always",
+        file=CHECK,
+        find="{% if backup_url | default('') | length > 0 %}\n",
+        replace="{% if true %}\n",
+        consequence="a node that names no station fails its checks for a backup it never had",
+    ),
+    Defect(
+        name="check/backup-timer-unwatched",
+        file=CHECK_DEFAULTS,
+        find="  - name: skibidi-backup.timer\n",
+        replace="  - name: skibidi-backups.timer\n",
+        consequence="a backup timer that stopped firing is never noticed",
     ),
 ]
 

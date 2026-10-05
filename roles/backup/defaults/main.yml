@@ -1,0 +1,64 @@
+---
+# The backup channel is optional and off by default. backup_url in a node file
+# turns it on for that node: the base URL of a restic REST server, such as
+# http://100.72.0.9:8000 on the tailnet or https://backup.example.org anywhere.
+# Empty installs nothing and removes what an earlier deploy installed
+backup_url: ""
+
+# The station's account for this node. rest-server with --private-repos lets an
+# account reach only the repository under its own name, so the name is also the
+# path
+backup_user: "{{ inventory_hostname }}"
+
+# Both from vault.yml, under backup_secrets.<node name>; vault.example.yml has
+# the shape. The registry cannot carry them: the inventory drops every key shaped
+# like a password before a role sees it
+backup_rest_password: "{{ (backup_secrets | default({}))[inventory_hostname].rest_password | default('') }}"
+backup_repository_password: "{{ (backup_secrets | default({}))[inventory_hostname].repository_password | default('') }}"
+
+# No credential in the URL: restic takes the account from the environment of
+# the one process that needs it, and a URL is what restic and systemd print
+backup_repository: "rest:{{ backup_url | regex_replace('/+$', '') }}/{{ backup_user }}/"
+
+# An http:// station must resolve inside these ranges, where the tunnel
+# encrypts what HTTP does not; an https:// station may be anywhere. The script
+# holds the rule, and the checker asks it
+backup_tunnel_ranges: "{{ metrics_tunnel_ranges }}"
+
+backup_unit_dir: /etc/systemd/system
+
+# A release rather than Ubuntu's package; WORKAROUNDS.md has why, under "restic
+# comes from its release, not from Ubuntu". The archive digest is the one the
+# release publishes in SHA256SUMS; the binary digest is the restic inside it
+backup_restic_version: "0.19.1"
+backup_restic_bz2_sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+backup_restic_sha256: 20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639
+backup_restic_path: /usr/local/bin/restic
+
+backup_script: /usr/local/sbin/skibidi-backup
+backup_config_dir: /etc/skibidi/backup
+backup_state_dir: /var/lib/skibidi-backup
+backup_cache_dir: /var/cache/skibidi-backup
+
+# SQLite stores, each copied with `sqlite3 .backup` into the staging directory
+# and pushed from there. A store read in place while its owner writes, or a WAL
+# store without its log, restores as a corrupt file
+backup_databases:
+  - "{{ xui_db | default('/etc/x-ui/x-ui.db') }}"
+  - "{{ metrics_db_dir | default('/var/lib/skibidi-metrics') }}/metrics.db"
+
+# The report's snapshots exist on the master alone. They are plain files that
+# the report writes once a day, so they are pushed in place
+backup_report_state: "{{ 'master' in group_names }}"
+backup_directories: "{{ [reporter_state_dir | default('/var/lib/skibidi-report')] if backup_report_state else [] }}"
+# matplotlib's cache, rebuilt on the next letter
+backup_excludes:
+  - "{{ reporter_state_dir | default('/var/lib/skibidi-report') }}/mpl"
+
+# Scattered so the fleet does not reach one station at the same moment. The
+# checker's silence limit for skibidi-backup.timer assumes a daily push
+backup_on_calendar: daily
+backup_randomized_delay: 1h
+# restic retries an unreachable station for minutes before it gives up, and a
+# first push of the metric store over a slow link takes long
+backup_timeout: 2h

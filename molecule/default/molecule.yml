@@ -68,6 +68,29 @@ provisioner:
         # are tested for real. The address is inside the tunnel ranges
         metrics_api_interface: skibidi0
         metrics_host: "100.64.0.1"
+        # The station is a real rest-server inside the VM, append-only with
+        # private repositories, started by converge on a second dummy
+        # interface. Its address is inside the tunnel ranges, so the script's
+        # guard and the checker accept plain HTTP to it, as on the tailnet
+        station_address: "100.64.0.2"
+        backup_url: "http://100.64.0.2:8000"
+        station_interface: station0
+        station_dir: /srv/station
+        # The VM runs the reporter the way a master does
+        backup_report_state: true
+        # Generated once per run into molecule's directory and read back by
+        # the verifier, so no literal sits here. Punctuation is in both on
+        # purpose: the script must hand either one over untouched
+        backup_secrets:
+          skibidi-node:
+            rest_password: >-
+              {{ lookup('ansible.builtin.password',
+                 lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/backup-rest-password',
+                 length=32, chars=['ascii_letters', 'digits', 'punctuation']) }}
+            repository_password: >-
+              {{ lookup('ansible.builtin.password',
+                 lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') ~ '/backup-repository-password',
+                 length=32, chars=['ascii_letters', 'digits', 'punctuation']) }}
 
 verifier:
   name: ansible
