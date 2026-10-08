@@ -78,11 +78,6 @@ jobs:
       - name: Report tests
         run: nix develop .#ci -c python3 -m unittest discover -s tests -v
 
-      # Proves the suite would fail if the generator broke — a green suite
-      # that cannot go red is not evidence
-      - name: Falsification
-        run: nix develop .#ci -c scripts/t.sh falsify -d tests/defects.sh -- python3 -m unittest discover -s tests -q
-
       - name: yamllint
         run: nix develop .#ci -c yamllint --strict .
 
@@ -96,3 +91,32 @@ jobs:
 
       - name: Playbook syntax
         run: nix develop .#ci -c ansible-playbook site.yml --syntax-check
+
+  # Proves the suite would fail if the code broke: a green suite that cannot
+  # go red is not evidence. Every defect reruns the whole suite, so one job
+  # cannot hold the list; each shard takes every fourth defect in its own
+  # checkout, and the shards run side by side
+  falsify:
+    name: Falsification ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SKIBIDI_NODES_DIR: ${{ github.workspace }}/inventory.example/nodes
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-ci-${{ runner.os }}-
+      # The suite runs here as it does in lint, against the same inventory
+      - name: Restore the registry permissions the inventory insists on
+        run: chmod 600 inventory.example/nodes/*.toml
+      - name: Break one guard at a time
+        run: nix develop .#ci -c scripts/t.sh falsify --shard ${{ matrix.shard }}/4 -d tests/defects.sh -- python3 -m unittest discover -s tests -q
