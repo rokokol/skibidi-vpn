@@ -49,7 +49,7 @@ except ModuleNotFoundError:  # pragma: no cover — Ubuntu 24.04 ships 3.12
 DAY_US = 86400 * 1_000_000
 
 # The neutral fallback; the deployed master overrides it with the theme's own
-# report stylesheet, delivered as /etc/skibidi/ddlc-report.css at deploy time
+# letter file, delivered as /etc/skibidi/ddlc-mail.json at deploy time
 PALETTE_DEFAULTS = {
     "paper": "#ffffff",
     "ink": "#1f2430",
@@ -62,69 +62,60 @@ PALETTE_DEFAULTS = {
     "divider": "#c3cbd6",
 }
 
-# What each semantic slot here means in the theme's report vocabulary. The
-# --ddlc-* names are the contract that repo maintains for HTML reports, which
-# outlives any renaming of the palette's own character colours
+# What each semantic slot here means in the theme's role vocabulary. The role
+# names are the contract ddlc-themes keeps for letters, which outlives any
+# renaming of the palette's own character colours
 THEME_ROLES = {
-    "paper": "--ddlc-ground",
-    "ink": "--ddlc-ink",
-    "muted": "--ddlc-muted",
-    "ash": "--ddlc-grid",
-    "blush": "--ddlc-code-ground",
-    "divider": "--ddlc-divider",
-    "warn": "--ddlc-series-2",
-    "accent": "--ddlc-accent",
-    "ok": "--ddlc-series-4",
+    "paper": "ground",
+    "ink": "text",
+    "muted": "muted",
+    "ash": "grid",
+    "blush": "code-ground",
+    "divider": "line",
+    "warn": "danger",
+    "accent": "accent",
+    "ok": "ok",
 }
 
-THEME_CYCLE = tuple(f"--ddlc-series-{index}" for index in range(1, 6))
+THEME_CYCLE = tuple(f"series-{index}" for index in range(1, 6))
 
 
-def parse_theme_css(text: str) -> dict:
-    """The :root block of the theme's report stylesheet, as name → colour.
+def load_theme(path: str | None = None) -> dict:
+    """The theme's letter file: its light colours, its faces and a ready style
+    value for each element, all literal, because mail clients drop var().
 
-    Only the light block: mail clients render on white, and the dark half of
-    the file deliberately collapses two series — a letter must not inherit
-    that. The parse stops at the first closing brace so the media queries
-    further down cannot override what :root declared.
-    """
-    root = re.search(r":root\s*\{([^}]*)\}", text)
-    if not root:
+    A machine nobody themed has none, and gets an empty theme."""
+    file = Path(path or os.environ.get("SKIBIDI_MAIL_FILE", "/etc/skibidi/ddlc-mail.json"))
+    try:
+        return json.loads(file.read_text())
+    except (OSError, ValueError):
         return {}
-    return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;\s]+)\s*;", root.group(1)))
 
 
-def load_palette(css: str | None = None) -> dict:
-    """Semantic slots resolved against the theme, wherever the theme is.
-
-    The stylesheet the deploy carried over wins; without it the neutral
-    defaults stand — a report on a machine nobody themed still renders.
-    """
-    if css is None:
-        try:
-            css = Path(
-                os.environ.get("SKIBIDI_REPORT_CSS_FILE", "/etc/skibidi/ddlc-report.css")
-            ).read_text()
-        except OSError:
-            css = ""
-    named = parse_theme_css(css or "")
+def load_palette(theme: dict) -> dict:
+    """Semantic slots resolved against the theme; without one the neutral
+    defaults stand, so a report on a machine nobody themed still renders."""
+    colors = theme.get("colors", {})
     palette: dict = dict(PALETTE_DEFAULTS)
-    for slot, variable in THEME_ROLES.items():
-        if variable in named:
-            palette[slot] = named[variable]
-    if all(variable in named for variable in THEME_CYCLE):
-        palette["cycle"] = [named[variable] for variable in THEME_CYCLE]
+    for slot, role in THEME_ROLES.items():
+        if role in colors:
+            palette[slot] = colors[role]
+    if all(role in colors for role in THEME_CYCLE):
+        palette["cycle"] = [colors[role] for role in THEME_CYCLE]
     else:
         palette["cycle"] = [palette[slot] for slot in ("accent", "warn", "muted", "ok", "ink")]
-    # Needs-attention is the game's own inform dialog, and the stylesheet
-    # names its colours; a machine nobody themed gets the code ground with
-    # the warn colour as its frame
-    palette["inform_bg"] = named.get("--ddlc-inform-ground", palette["blush"])
-    palette["inform_border"] = named.get("--ddlc-inform-border", palette["warn"])
     return palette
 
 
-PALETTE = load_palette()
+THEME = load_theme()
+PALETTE = load_palette(THEME)
+
+
+def style(element: str, extra: str = "") -> str:
+    """The theme's style value for an element, with what this element alone
+    needs on top; a later declaration in a style attribute wins. Unthemed, an
+    element keeps the reader's default look and only the extra"""
+    return ";".join(part for part in (THEME.get("styles", {}).get(element, ""), extra) if part)
 
 
 # ---------------------------------------------------------------- config
@@ -889,29 +880,18 @@ def render_charts(data) -> dict[str, bytes]:
 # colour, headings underlined by the divider, tables ruled between rows only,
 # and nothing shaped like a card
 
-# The system's own pairing: Doki (the game's face) for headings and prose,
-# DepartureMono for data — mail clients load no web fonts, so the letter names
-# the faces installed on the reader's machines and degrades to honest stacks
-FONT_PROSE = "Doki, Spectral, Georgia, 'Times New Roman', serif"
-FONT_DATA = ("'DepartureMono Nerd Font Mono', 'DepartureMono Nerd Font', "
-             "'Departure Mono', ui-monospace, 'SF Mono', Menlo, monospace")
-
-
 def heading(title):
     # Doki has one weight; a synthetic bold smears it. Size and the divider
-    # carry the hierarchy instead
-    return (f'<h2 style="margin:32px 0 8px;font-size:19px;line-height:1.25;'
-            f'font-weight:normal;color:{PALETTE["ink"]}">{html.escape(title)}</h2>')
+    # carry the hierarchy instead, and the theme's h2 says so
+    return f'<h2 style="{style("h2")}">{html.escape(title)}</h2>'
 
 
 def muted(text, size=13):
-    return (f'<p style="margin:2px 0 10px;font-size:{size}px;'
-            f'color:{PALETTE["muted"]}">{html.escape(text)}</p>')
+    return f'<p style="{style("sub", f"font-size:{size}px")}">{html.escape(text)}</p>'
 
 
 def prose(text):
-    return (f'<p style="margin:8px 0;font-size:14px;line-height:1.55;'
-            f'color:{PALETTE["ink"]}">{html.escape(text)}</p>')
+    return f'<p style="{style("p")}">{html.escape(text)}</p>'
 
 
 def stat_tiles(pairs):
@@ -919,50 +899,36 @@ def stat_tiles(pairs):
     label in the prose face, the value large in the data face. No synthetic
     bold — a pixel face carries hierarchy by size alone."""
     cells = "".join(
-        '<td style="padding:14px 28px 14px 0;vertical-align:top">'
-        f'<div style="font-size:13px;color:{PALETTE["muted"]};'
-        f'font-family:{FONT_PROSE}">{html.escape(str(label))}</div>'
-        f'<div style="font-size:24px;color:{PALETTE["ink"]};'
-        f'font-family:{FONT_DATA};line-height:1.3">{html.escape(str(value))}</div></td>'
+        f'<td style="{style("kpi-cell")}">'
+        f'<div style="{style("kpi-label")}">{html.escape(str(label))}</div>'
+        f'<div style="{style("kpi-value")}">{html.escape(str(value))}</div></td>'
         for label, value in pairs
     )
-    return f'<table style="border-collapse:collapse;margin:2px 0"><tr>{cells}</tr></table>'
+    return f'<table style="{style("kpi")}"><tr>{cells}</tr></table>'
 
 
 def table(headers, rows, numeric=()):
     """The stylesheet's table: rules between rows only, no vertical lines, the
     header underlined a shade darker. Numeric columns are right-aligned in the
-    sans with tabular figures, because digits only line up when every digit is
-    the width of a zero."""
+    data face, because digits only line up when every digit is the width of a
+    zero, and a monospaced face gives that by construction."""
     def th_cell(index, header):
         align = "right" if index in numeric else "left"
-        return (f'<th style="text-align:{align};font-size:11px;'
-                f'font-family:{FONT_DATA};font-weight:normal;color:{PALETTE["muted"]};'
-                f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["muted"]}">'
-                f"{html.escape(str(header))}</th>")
+        return f'<th style="{style("th", f"text-align:{align}")}">{html.escape(str(header))}</th>'
 
     def td_cell(index, cell):
         if str(cell).startswith("<div"):
-            style = (f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["ash"]};'
-                     "vertical-align:middle")
-            return f'<td style="{style}">{cell}</td>'
+            return f'<td style="{style("td-cell")}">{cell}</td>'
         if index in numeric:
-            # The data face is monospaced, so digits line up by construction
-            style = (f'font-size:12px;color:{PALETTE["ink"]};font-family:{FONT_DATA};'
-                     "text-align:right;"
-                     f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["ash"]}')
-        else:
-            style = (f'font-size:14px;color:{PALETTE["ink"]};font-family:{FONT_PROSE};'
-                     f'padding:6px 18px 6px 0;border-bottom:1px solid {PALETTE["ash"]}')
-        return f'<td style="{style}">{html.escape(str(cell))}</td>'
+            return f'<td style="{style("td-data", "text-align:right")}">{html.escape(str(cell))}</td>'
+        return f'<td style="{style("td")}">{html.escape(str(cell))}</td>'
 
     th = "".join(th_cell(index, header) for index, header in enumerate(headers))
     body = "".join(
         "<tr>" + "".join(td_cell(index, cell) for index, cell in enumerate(row)) + "</tr>"
         for row in rows
     )
-    return ('<table style="border-collapse:collapse;width:100%;margin:6px 0 4px">'
-            f"<tr>{th}</tr>{body}</table>")
+    return f'<table style="{style("table")}"><tr>{th}</tr>{body}</table>'
 
 
 def bar(share, color, segments=16):
@@ -971,12 +937,10 @@ def bar(share, color, segments=16):
     in a light step of the theme."""
     filled = max(1, round(share * segments)) if share > 0 else 0
     cells = "".join(
-        f'<td style="height:10px;font-size:0;line-height:0;'
-        f'background:{color if index < filled else PALETTE["divider"]}"></td>'
+        f'<td style="{style("meter-cell", "background:" + (color if index < filled else PALETTE["divider"]))}"></td>'
         for index in range(segments)
     )
-    return ('<div><table style="border-collapse:separate;border-spacing:2px 0;'
-            f'width:100%;max-width:320px"><tr>{cells}</tr></table></div>')
+    return f'<div><table style="{style("meter")}"><tr>{cells}</tr></table></div>'
 
 
 def render_meters(data, charts) -> list:
@@ -1002,23 +966,19 @@ def render_meters(data, charts) -> list:
 
 
 def chart_image(name):
-    return (
-        f'<img src="cid:skibidi-{name}" alt="{name} chart" '
-        'style="max-width:100%;height:auto;display:block;margin:10px 0 4px">'
-    )
+    return f'<img src="cid:skibidi-{name}" alt="{name} chart" style="{style("image")}">'
 
 
 def inform_dialog(title, items):
-    # The game's own dialog box, not a stripe-edged callout: a pink ground
-    # framed on all sides, everything centred, the ink doing the talking
-    lines = "".join(f'<li style="margin:5px 0">{html.escape(item)}</li>' for item in items)
+    # The game's "Just Monika." pop-up, not a stripe-edged callout: a pale
+    # ground in a thick frame, everything centred, the ink doing the talking.
+    # Unthemed, the warn colour still frames it, so it never reads as prose
+    lines = "".join(f'<li style="{style("inform-item")}">{html.escape(item)}</li>' for item in items)
+    frame = "" if THEME else f'border:2px solid {PALETTE["warn"]};padding:12px'
     return (
-        f'<div style="background:{PALETTE["inform_bg"]};border:2px solid '
-        f'{PALETTE["inform_border"]};border-radius:6px;'
-        f'padding:20px 24px;margin:18px 0;color:{PALETTE["ink"]};text-align:center">'
-        f'<div style="font-size:17px;font-weight:normal">{html.escape(title)}</div>'
-        f'<ul style="margin:8px 0 0;padding:0;list-style:none;font-size:14px">'
-        f"{lines}</ul></div>"
+        f'<div style="{style("inform", frame)}">'
+        f'<div style="{style("inform-title")}">{html.escape(title)}</div>'
+        f'<ul style="{style("inform-list")}">{lines}</ul></div>'
     )
 
 
@@ -1135,23 +1095,17 @@ def render_html(data, charts):
     if changes:
         sections.append(heading("What changed this week"))
         items = "".join(
-            f'<li style="margin:3px 0">{html.escape(line)}</li>' for line in changes)
-        sections.append(
-            f'<ul style="margin:6px 0;padding-left:20px;font-size:14px;'
-            f'line-height:1.6;color:{PALETTE["ink"]}">{items}</ul>')
+            f'<li style="{style("item")}">{html.escape(line)}</li>' for line in changes)
+        sections.append(f'<ul style="{style("list")}">{items}</ul>')
 
     start, end = data["start"], data["end"]
     return (
-        f'<div style="background:{PALETTE["paper"]};color:{PALETTE["ink"]};'
-        f'font-family:{FONT_PROSE};line-height:1.55;padding:28px 20px 48px">'
-        f'<div style="max-width:736px;margin:0 auto">'
-        f'<h1 style="font-size:27px;line-height:1.25;font-weight:normal;'
-        f'color:{PALETTE["ink"]};'
-        f'margin:0;border-bottom:2px solid {PALETTE["divider"]};padding-bottom:6px">'
-        "Weekly VPN report</h1>"
+        f'<div style="{style("page")}">'
+        f'<div style="{style("column")}">'
+        f'<h1 style="{style("h1")}">Weekly VPN report</h1>'
         + muted(f"{start:%Y-%m-%d %H:%M} — {end:%Y-%m-%d %H:%M} · {data['timezone']}")
         + "".join(sections)
-        + f'<div style="border-top:2px solid {PALETTE["divider"]};margin-top:32px"></div>'
+        + f'<div style="{style("divider", "border-top:2px solid " + PALETTE["divider"])}"></div>'
         + muted("skibidi-report · the letter always goes out; partial numbers are named as partial", 12)
         + "</div></div>"
     )

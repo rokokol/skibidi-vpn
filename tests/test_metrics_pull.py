@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 os.environ.setdefault("MPLCONFIGDIR", tempfile.mkdtemp(prefix="skibidi-mpl-"))
-os.environ.setdefault("SKIBIDI_REPORT_CSS_FILE", "/nonexistent/ddlc-report.css")
+os.environ.setdefault("SKIBIDI_MAIL_FILE", "/nonexistent/ddlc-mail.json")
 
 
 def load(name: str, relative: str):

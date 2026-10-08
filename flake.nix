@@ -71,10 +71,10 @@
 
           # Deploys run from this shell, and the roles read these to carry the
           # theme onto the nodes — the matplotlib style for the charts and the
-          # report stylesheet the HTML inlines its colours from, both riding
-          # the lockfile, never a copy in a tracked file
+          # letter file the HTML takes its colours, faces and styles from, both
+          # riding the lockfile, never a copy in a tracked file
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
-          SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
+          SKIBIDI_MAIL = "${ddlc-themes.lib.mail}";
           # The charts' text face, deployed to the master so matplotlib there
           # letters its axes the way the tables around it are set
           SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
@@ -111,7 +111,7 @@
             restic-rest-server
           ];
           SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
-          SKIBIDI_REPORT_CSS = "${ddlc-themes.lib.report}";
+          SKIBIDI_MAIL = "${ddlc-themes.lib.mail}";
           SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
         };
       });

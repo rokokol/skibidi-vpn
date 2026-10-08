@@ -39,8 +39,8 @@
 # a deploy from outside the shell simply leaves the neutral defaults in place
 # Both halves of one theme, generated in one repo from one palette revision:
 # the mplstyle the charts apply verbatim (its series order carries the
-# colour-blindness guarantees) and the stylesheet whose :root variables the
-# HTML inlines. Recreating either here would be a copy that drifts
+# colour-blindness guarantees) and the letter file whose colours, faces and
+# styles the HTML inlines. Recreating either here would be a copy that drifts
 - name: Carry the theme the flake is locked to
   ansible.builtin.copy:
     src: "{{ lookup('env', item.env) }}"
@@ -50,7 +50,7 @@
     mode: "0644"
   loop:
     - { env: SKIBIDI_MPLSTYLE, dest: /etc/skibidi/ddlc.mplstyle }
-    - { env: SKIBIDI_REPORT_CSS, dest: /etc/skibidi/ddlc-report.css }
+    - { env: SKIBIDI_MAIL, dest: /etc/skibidi/ddlc-mail.json }
     - { env: SKIBIDI_CHART_FONT, dest: /etc/skibidi/chart-font.otf }
   when: lookup('env', item.env) | length > 0
 

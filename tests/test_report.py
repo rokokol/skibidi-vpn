@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 # and a test run must not try to write /var/lib
 os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="skibidi-mpl-")
 # A themed dev machine must not leak its own /etc/skibidi files into the tests
-os.environ["SKIBIDI_REPORT_CSS_FILE"] = "/nonexistent/ddlc-report.css"
+os.environ["SKIBIDI_MAIL_FILE"] = "/nonexistent/ddlc-mail.json"
 
 SCRIPT = (
     Path(__file__).resolve().parent.parent
@@ -307,63 +307,54 @@ class TestMplStyle(unittest.TestCase):
             del os.environ["SKIBIDI_MPLSTYLE_FILE"]
 
 
-THEME_CSS = """
-:root {
-  --ddlc-ground: #FFFFFF;
-  --ddlc-ink: #222222;
-  --ddlc-muted: #B59CA1;
-  --ddlc-grid: #DADADA;
-  --ddlc-code-ground: #FFDBF0;
-  --ddlc-accent: #BB5599;
-  --ddlc-series-1: #BB5599;
-  --ddlc-series-2: #CC0C29;
-  --ddlc-series-3: #6868B4;
-  --ddlc-series-4: #76C332;
-  --ddlc-series-5: #6C4681;
+# The shape of ddlc-themes' letter file, cut to what these tests read
+THEME = {
+    "colors": {
+        "ground": "#FFFFFF", "text": "#222222", "muted": "#64595B", "grid": "#DADADA",
+        "code-ground": "#FFDBF0", "line": "#FFBDE1", "accent": "#BB5599",
+        "danger": "#CC0C29", "ok": "#76C332",
+        "series-1": "#BB5599", "series-2": "#CC0C29", "series-3": "#6868B4",
+        "series-4": "#76C332", "series-5": "#6C4681",
+    },
+    "styles": {"inform": "border:6px solid #FFBDE1;background:#FFE6F5"},
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --ddlc-ground: #222222;
-    --ddlc-series-4: #B59CA1;
-    --ddlc-series-5: #B59CA1;
-  }
-}
-"""
 
 
 class TestPalette(unittest.TestCase):
-    def test_the_light_root_block_fills_slots_and_the_cycle_keeps_its_order(self):
-        palette = report.load_palette(THEME_CSS)
+    def test_the_theme_fills_slots_and_the_cycle_keeps_its_order(self):
+        palette = report.load_palette(THEME)
         self.assertEqual(palette["warn"], "#CC0C29")
         self.assertEqual(palette["paper"], "#FFFFFF")
+        self.assertEqual(palette["ok"], "#76C332")
         # The order is a deuteranopia guarantee, not a taste — see the theme
         self.assertEqual(palette["cycle"],
                          ["#BB5599", "#CC0C29", "#6868B4", "#76C332", "#6C4681"])
 
-    def test_the_dark_block_never_leaks_into_the_letter(self):
-        # Mail clients render on white, and the dark half of the stylesheet
-        # deliberately collapses two series into grey — a letter that parsed
-        # past the first block would inherit both surprises
-        palette = report.load_palette(THEME_CSS)
-        self.assertEqual(palette["ok"], "#76C332")
-        self.assertNotIn("#222222", [palette["paper"]])
-
     def test_an_unthemed_machine_still_renders(self):
-        palette = report.load_palette("")
+        palette = report.load_palette({})
         self.assertEqual(palette["ink"], report.PALETTE_DEFAULTS["ink"])
         self.assertEqual(len(palette["cycle"]), 5)
 
-    def test_the_inform_dialog_reads_from_the_stylesheet_first(self):
-        css = THEME_CSS.replace(
-            "--ddlc-series-1", "--ddlc-inform-ground: #FFDBF0;\n  --ddlc-inform-border: #FFBDE1;\n  --ddlc-series-1")
-        palette = report.load_palette(css)
-        self.assertEqual(palette["inform_bg"], "#FFDBF0")
-        self.assertEqual(palette["inform_border"], "#FFBDE1")
+    def test_a_broken_letter_file_is_no_theme_at_all(self):
+        import tempfile
 
-    def test_without_inform_variables_the_box_is_code_ground_framed_in_warn(self):
-        palette = report.load_palette(THEME_CSS)
-        self.assertEqual(palette["inform_bg"], palette["blush"])
-        self.assertEqual(palette["inform_border"], palette["warn"])
+        broken = Path(tempfile.mkdtemp(prefix="skibidi-theme-")) / "ddlc-mail.json"
+        broken.write_text("{ not json")
+        self.assertEqual(report.load_theme(str(broken)), {})
+        self.assertEqual(report.load_theme("/nonexistent/ddlc-mail.json"), {})
+
+    def test_the_inform_dialog_wears_the_theme_s_pop_up(self):
+        saved = report.THEME
+        report.THEME = THEME
+        try:
+            box = report.inform_dialog("Needs attention", ["a node is down"])
+        finally:
+            report.THEME = saved
+        self.assertIn(THEME["styles"]["inform"], box)
+
+    def test_unthemed_the_inform_dialog_is_framed_in_warn(self):
+        box = report.inform_dialog("Needs attention", ["a node is down"])
+        self.assertIn(report.PALETTE_DEFAULTS["warn"], box)
 
 
 class TestTrafficSeries(unittest.TestCase):

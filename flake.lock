@@ -8,11 +8,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1788175553,
-        "narHash": "sha256-UVgebuQzuzpKGKKhGIiKIaaxKRp2X7wEHHz0wvg1t+k=",
+        "lastModified": 1791201972,
+        "narHash": "sha256-ddBzpIRhdSZkKfBOxolPix9c82ytoYw7VwWynfFOvs4=",
         "owner": "rokokol",
         "repo": "ddlc-palette",
-        "rev": "c672b49377ea1cb805a1f63315b474f7122b4622",
+        "rev": "f83687139665905790ea1caf2fc2760d26d2f0d5",
         "type": "github"
       },
       "original": {
@@ -29,11 +29,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1788341256,
-        "narHash": "sha256-JHz0/6GZYqfJNoFYxpAbaEYMQeodFCjmMCSWZ5XlTG8=",
+        "lastModified": 1791462568,
+        "narHash": "sha256-2rEoJgN8JoYx0B9dKA5wGrdd1Ry5JIjjI4/P+g/Gm5Q=",
         "owner": "rokokol",
         "repo": "ddlc-themes",
-        "rev": "b4e45ed36cea0dfc0533037e2f5dc4b922a15716",
+        "rev": "b06ac2320866c090f467f98e510b4e6a15d6d74b",
         "type": "github"
       },
       "original": {

@@ -34,17 +34,30 @@ ok   Тест-инбаунд отвечает
 1 check(s) failed on test-node
 """
 
-THEME_CSS = ":root { --ddlc-series-2: #CC0C29; --ddlc-ground: #FFFFFF; }"
+# The shape of ddlc-themes' letter file, cut to what these tests read
+THEME = {
+    "colors": {"danger": "#CC0C29", "ground": "#FFFFFF"},
+    "styles": {"inform": "border:6px solid #FFBDE1;background:#FFE6F5"},
+}
 
 
-def build(css_path="/nonexistent/theme.css"):
+def theme_file(theme=THEME):
+    import json
+    import tempfile
+
+    path = Path(tempfile.mkdtemp(prefix="skibidi-theme-")) / "ddlc-mail.json"
+    path.write_text(json.dumps(theme))
+    return str(path)
+
+
+def build(theme_path="/nonexistent/ddlc-mail.json"):
     import email
     import email.policy
 
     message = alert.build_message(
         BODY, "skibidi-check.service", "test-node",
         "[test-node] 1 check(s) failed on test-node",
-        "vpn@example.org", "skibidi-vpn@test-node", css_path,
+        "vpn@example.org", "skibidi-vpn@test-node", theme_path,
     )
     # Through bytes and back, because sendmail sees bytes, not the object
     return email.message_from_bytes(message.as_bytes(), policy=email.policy.default)
@@ -86,26 +99,17 @@ class TestAlertMessage(unittest.TestCase):
         message = build()
         self.assertIn("Тест-инбаунд".encode(), message.as_bytes())
 
-    def test_theme_colours_apply_when_the_stylesheet_exists(self):
-        import tempfile
-
-        css = Path(tempfile.mkdtemp(prefix="skibidi-css-")) / "theme.css"
-        css.write_text(THEME_CSS)
-        body = html_part(build(css_path=str(css)))
+    def test_theme_colours_apply_when_the_letter_file_exists(self):
+        body = html_part(build(theme_path=theme_file()))
         self.assertIn("#CC0C29", body)
 
-    def test_a_missing_stylesheet_still_renders(self):
-        body = html_part(build(css_path="/nonexistent/theme.css"))
+    def test_a_missing_letter_file_still_renders(self):
+        body = html_part(build(theme_path="/nonexistent/ddlc-mail.json"))
         self.assertIn(alert.PALETTE_DEFAULTS["warn"], body)
 
-    def test_the_failed_box_takes_the_inform_colours_from_the_stylesheet(self):
-        import tempfile
-
-        css = Path(tempfile.mkdtemp(prefix="skibidi-css-")) / "theme.css"
-        css.write_text(":root { --ddlc-inform-ground: #FFDBF0; --ddlc-inform-border: #FFBDE1; }")
-        body = html_part(build(css_path=str(css)))
-        self.assertIn("#FFDBF0", body)
-        self.assertIn("#FFBDE1", body)
+    def test_the_failed_box_wears_the_theme_s_pop_up(self):
+        body = html_part(build(theme_path=theme_file()))
+        self.assertIn(THEME["styles"]["inform"], body)
 
 
 class TestClassification(unittest.TestCase):

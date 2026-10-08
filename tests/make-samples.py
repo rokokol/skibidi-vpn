@@ -19,7 +19,7 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "samples"
 OUT.mkdir(parents=True, exist_ok=True)
 
 os.environ["MPLCONFIGDIR"] = str(OUT / ".mpl")
-os.environ["SKIBIDI_REPORT_CSS_FILE"] = os.environ.get("SKIBIDI_REPORT_CSS", "")
+os.environ["SKIBIDI_MAIL_FILE"] = os.environ.get("SKIBIDI_MAIL", "")
 os.environ["SKIBIDI_MPLSTYLE_FILE"] = os.environ.get("SKIBIDI_MPLSTYLE", "")
 os.environ["SKIBIDI_CHART_FONT_FILE"] = os.environ.get("SKIBIDI_CHART_FONT", "")
 
@@ -148,7 +148,7 @@ letter = report.build_message(report_data(), "skibidi-vpn@node-a", "vpn@example.
 message = alert.build_message(
     ALERT_BODY, "skibidi-check.service", "node-b",
     "[node-b] 1 check(s) failed on node-b",
-    "vpn@example.org", "skibidi-vpn@node-b", os.environ["SKIBIDI_REPORT_CSS_FILE"],
+    "vpn@example.org", "skibidi-vpn@node-b", os.environ["SKIBIDI_MAIL_FILE"],
 )
 (OUT / "alert-sample.html").write_text(inline(message))
 print("clean samples written")

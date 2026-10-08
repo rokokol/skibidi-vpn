@@ -7,8 +7,8 @@ untouched — a client without HTML loses nothing, and the caller falls back to
 mailing that same text if this script fails for any reason at all: prettiness
 must never cost an alert.
 
-Colours come from the theme's report stylesheet where the deploy delivered
-one, and from a neutral fallback where it did not. Interactivity in mail is
+Colours, faces and element styles come from the theme's letter file where
+the deploy delivered one, and from a neutral fallback where it did not. Interactivity in mail is
 what <details> can carry and no more — scripts do not run in mail clients,
 so the full journal folds rather than reacts.
 """
@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import os
-import re
 import sys
 from email.message import EmailMessage
 from pathlib import Path
@@ -35,43 +35,49 @@ PALETTE_DEFAULTS = {
     "divider": "#c3cbd6",
 }
 
+# What each slot here means in the theme's role vocabulary, the contract
+# ddlc-themes keeps for letters
 THEME_ROLES = {
-    "paper": "--ddlc-ground",
-    "ink": "--ddlc-ink",
-    "muted": "--ddlc-muted",
-    "ash": "--ddlc-grid",
-    "blush": "--ddlc-code-ground",
-    "divider": "--ddlc-divider",
-    "warn": "--ddlc-series-2",
-    "accent": "--ddlc-accent",
-    "ok": "--ddlc-series-4",
+    "paper": "ground",
+    "ink": "text",
+    "muted": "muted",
+    "ash": "grid",
+    "blush": "code-ground",
+    "divider": "line",
+    "warn": "danger",
+    "accent": "accent",
+    "ok": "ok",
 }
 
 
-def parse_theme_css(text: str) -> dict:
-    # Only the first :root block — the light one. Mail renders on white, and
-    # the dark half of the stylesheet deliberately collapses two series
-    root = re.search(r":root\s*\{([^}]*)\}", text)
-    if not root:
-        return {}
-    return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;\s]+)\s*;", root.group(1)))
-
-
-def load_palette(css_path: str) -> dict:
+def load_theme(path: str) -> dict:
+    """The theme's letter file, literal values only because mail drops var();
+    a machine nobody themed has none, and gets an empty theme."""
     try:
-        named = parse_theme_css(Path(css_path).read_text())
-    except OSError:
-        named = {}
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def load_palette(theme: dict) -> dict:
+    colors = theme.get("colors", {})
     palette = dict(PALETTE_DEFAULTS)
-    for slot, variable in THEME_ROLES.items():
-        if variable in named:
-            palette[slot] = named[variable]
-    # The failure box is the game's own inform dialog, and the stylesheet
-    # names its colours; a machine nobody themed gets the code ground with
-    # the warn colour as its frame
-    palette["inform_bg"] = named.get("--ddlc-inform-ground", palette["blush"])
-    palette["inform_border"] = named.get("--ddlc-inform-border", palette["warn"])
+    for slot, role in THEME_ROLES.items():
+        if role in colors:
+            palette[slot] = colors[role]
     return palette
+
+
+def styler(theme: dict):
+    """The theme's style value for an element, with what this element alone
+    needs on top; a later declaration in a style attribute wins. Unthemed, an
+    element keeps the reader's default look and only the extra"""
+    styles = theme.get("styles", {})
+
+    def style(element: str, extra: str = "") -> str:
+        return ";".join(part for part in (styles.get(element, ""), extra) if part)
+
+    return style
 
 
 def classify(line: str) -> str:
@@ -84,18 +90,12 @@ def classify(line: str) -> str:
     return "meta"
 
 
-# The system's own pairing: Doki (the game's face) for headings and prose,
-# DepartureMono for data — mail clients load no web fonts, so the letter names
-# the faces installed on the reader's machines and degrades to honest stacks
-FONT_PROSE = "Doki, Spectral, Georgia, 'Times New Roman', serif"
-FONT_MONO = ("'DepartureMono Nerd Font Mono', 'DepartureMono Nerd Font', "
-             "'Departure Mono', ui-monospace, 'SF Mono', Menlo, monospace")
-
-
-def render_html(body: str, unit: str, host: str, palette: dict) -> str:
-    """The theme's report stylesheet, spelled as inline styles: prose on the
-    ground colour, the heading underlined by the divider, the failures as the
-    game's inform dialog, and the journal on the code ground it belongs to."""
+def render_html(body: str, unit: str, host: str, theme: dict) -> str:
+    """The theme's letter styles: prose on the ground colour, the heading
+    underlined by the divider, the failures as the game's "Just Monika."
+    pop-up, and the journal on the code ground it belongs to."""
+    palette = load_palette(theme)
+    style = styler(theme)
     lines = [line for line in body.splitlines() if line.strip()]
     fails = [line for line in lines if classify(line) == "fail"]
 
@@ -110,55 +110,49 @@ def render_html(body: str, unit: str, host: str, palette: dict) -> str:
         if kind == "fail":
             # The warn ink itself, not a synthetic bold — a pixel face fakes
             # weight badly, and the palette's only red is allowed to shout
-            return (f'<div style="padding:2px 0;color:{palette["warn"]}">'
-                    f"✗ {text}</div>")
+            return f'<div style="{style("journal-line", "color:" + palette["warn"])}">✗ {text}</div>'
         if kind == "note":
-            return (f'<div style="padding:2px 0;color:{palette["ink"]}">'
+            return (f'<div style="{style("journal-line")}">'
                     f'<span style="color:{palette["accent"]}">○</span> {text}</div>')
         if kind == "ok":
-            return (f'<div style="padding:2px 0;color:{palette["ink"]}">'
+            return (f'<div style="{style("journal-line")}">'
                     f'<span style="color:{palette["ok"]}">✓</span> {text}</div>')
-        return f'<div style="padding:2px 0;color:{palette["ink"]}">{text}</div>'
+        return f'<div style="{style("journal-line")}">{text}</div>'
 
     sections = []
     if fails:
-        items = "".join(f"<li>{html.escape(line[4:].strip())}</li>" for line in fails)
-        # The game's own dialog box: a pink ground framed on all sides,
-        # everything centred, the ink doing the talking
+        items = "".join(f'<li style="{style("inform-item")}">{html.escape(line[4:].strip())}</li>'
+                        for line in fails)
+        # The game's "Just Monika." pop-up: a pale ground in a thick frame,
+        # everything centred, the ink doing the talking. Unthemed, the warn
+        # colour still frames it, so it never reads as prose
+        frame = "" if theme else f'border:2px solid {palette["warn"]};padding:12px'
         sections.append(
-            f'<div style="background:{palette["inform_bg"]};border:2px solid '
-            f'{palette["inform_border"]};border-radius:6px;'
-            f'padding:20px 24px;margin:18px 0;color:{palette["ink"]};text-align:center">'
-            '<div style="font-size:17px;font-weight:normal">Failed</div>'
-            f'<ul style="margin:8px 0 0;padding:0;list-style:none;font-size:14px;'
-            f'line-height:1.6">{items}</ul></div>'
+            f'<div style="{style("inform", frame)}">'
+            f'<div style="{style("inform-title")}">Failed</div>'
+            f'<ul style="{style("inform-list")}">{items}</ul></div>'
         )
     # The whole run folds away rather than scrolling forever; <details> is the
     # one fold mail clients honour, and the ones that do not simply show it
     # open. The journal sits on the code ground, where machine text lives
+    mono = "" if theme else "font-family:monospace"
     sections.append(
-        '<details style="margin:16px 0">'
-        f'<summary style="font-size:16px;color:{palette["ink"]};'
-        'font-weight:normal;cursor:pointer">Every check from this run</summary>'
-        f'<div style="background:{palette["blush"]};border-radius:4px;'
-        f'padding:12px 16px;margin-top:8px;font-family:{FONT_MONO};font-size:12px">'
+        f'<details style="{style("details")}">'
+        f'<summary style="{style("summary")}">Every check from this run</summary>'
+        f'<div style="{style("journal", mono)}">'
         f'{"".join(row(line) for line in lines)}</div></details>'
     )
     return (
-        f'<div style="background:{palette["paper"]};color:{palette["ink"]};'
-        f'font-family:{FONT_PROSE};line-height:1.55;padding:28px 20px 48px">'
-        f'<div style="max-width:736px;margin:0 auto">'
-        f'<h1 style="font-size:27px;line-height:1.25;font-weight:normal;'
-        f'color:{palette["ink"]};margin:0;'
-        f'border-bottom:2px solid {palette["divider"]};padding-bottom:6px">'
-        f"{html.escape(unit)} failed</h1>"
-        f'<p style="margin:2px 0 10px;font-size:13px;color:{palette["muted"]}">'
-        f"on {html.escape(host)}</p>" + "".join(sections) + "</div></div>"
+        f'<div style="{style("page")}">'
+        f'<div style="{style("column")}">'
+        f'<h1 style="{style("h1")}">{html.escape(unit)} failed</h1>'
+        f'<p style="{style("sub")}">on {html.escape(host)}</p>'
+        + "".join(sections) + "</div></div>"
     )
 
 
 def build_message(body: str, unit: str, host: str, subject: str,
-                  to: str, sender: str, css_path: str) -> EmailMessage:
+                  to: str, sender: str, theme_path: str) -> EmailMessage:
     message = EmailMessage()
     message["To"] = to
     message["From"] = f"skibidi-vpn <{sender}>"
@@ -171,7 +165,7 @@ def build_message(body: str, unit: str, host: str, subject: str,
     # Russian remark from breaking the part
     message.set_content(body, charset="utf-8", cte="8bit")
     message.add_alternative(
-        render_html(body, unit, host, load_palette(css_path)),
+        render_html(body, unit, host, load_theme(theme_path)),
         subtype="html", charset="utf-8",
     )
     return message
@@ -184,13 +178,13 @@ def main() -> int:
     parser.add_argument("--subject", required=True)
     parser.add_argument("--to", required=True)
     parser.add_argument("--sender", required=True)
-    parser.add_argument("--css", default=os.environ.get(
-        "SKIBIDI_REPORT_CSS_FILE", "/etc/skibidi/ddlc-report.css"))
+    parser.add_argument("--theme", default=os.environ.get(
+        "SKIBIDI_MAIL_FILE", "/etc/skibidi/ddlc-mail.json"))
     arguments = parser.parse_args()
 
     message = build_message(
         sys.stdin.read(), arguments.unit, arguments.host,
-        arguments.subject, arguments.to, arguments.sender, arguments.css,
+        arguments.subject, arguments.to, arguments.sender, arguments.theme,
     )
     sys.stdout.buffer.write(message.as_bytes())
     return 0

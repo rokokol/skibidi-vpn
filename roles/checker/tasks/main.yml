@@ -92,7 +92,7 @@
   register: checker_probe_letter
   failed_when: checker_probe_letter.rc != 0
 
-# The alert's HTML half. Optional twice over: the css only arrives from a
+# The alert's HTML half. Optional twice over: the theme only arrives from a
 # deploy run inside the dev shell, and the alert script falls back to plain
 # text if the renderer fails - so neither file can cost an alert
 - name: Install the alert renderer
@@ -103,14 +103,21 @@
     group: root
     mode: "0700"
 
-- name: Carry the theme the alerts colour themselves with
+- name: Carry the theme the alerts dress themselves in
   ansible.builtin.copy:
-    src: "{{ lookup('env', 'SKIBIDI_REPORT_CSS') }}"
-    dest: /etc/skibidi/ddlc-report.css
+    src: "{{ lookup('env', 'SKIBIDI_MAIL') }}"
+    dest: /etc/skibidi/ddlc-mail.json
     owner: root
     group: root
     mode: "0644"
-  when: lookup('env', 'SKIBIDI_REPORT_CSS') | length > 0
+  when: lookup('env', 'SKIBIDI_MAIL') | length > 0
+
+# The stylesheet the letters read before ddlc-themes shipped a letter file;
+# nothing reads it now, and a stale copy would only mislead whoever looks
+- name: Remove the old theme stylesheet
+  ansible.builtin.file:
+    path: /etc/skibidi/ddlc-report.css
+    state: absent
 
 - name: Install the check and the alert
   ansible.builtin.template:
