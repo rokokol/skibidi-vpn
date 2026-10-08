@@ -38,6 +38,11 @@
         name = "falsify-secrets.sh";
         path = ./tests/falsify-secrets.sh;
       };
+      # The defect list t.sh falsify sources; t.sh itself is vendored and checked at its source
+      defects = builtins.path {
+        name = "defects.sh";
+        path = ./tests/defects.sh;
+      };
     in
     {
       devShells = forAll (pkgs: {
@@ -118,10 +123,10 @@
 
       checks = forAll (pkgs: {
         # Everything that needs no network and no VM, so it can gate a push.
-        # The two scripts isolated rather than reached for through ${self}: that ties the
-        # check to the whole repository, so every commit gives it a new hash and rebuilds it
+        # The scripts isolated rather than reached for through ${self}: that ties the check
+        # to the whole repository, so every commit gives it a new hash and rebuilds it
         lint = pkgs.runCommand "skibidi-vpn-lint" { buildInputs = with pkgs; [ shellcheck ]; } ''
-          shellcheck ${noSecrets} ${falsifySecrets}
+          shellcheck ${noSecrets} ${falsifySecrets} ${defects}
           touch $out
         '';
       });
