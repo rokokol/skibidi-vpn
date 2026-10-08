@@ -32,7 +32,7 @@
     install_python_debian: true
     types: [deb]
     uris: https://pkgs.tailscale.com/stable/ubuntu
-    suites: "{{ ansible_distribution_release }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
     components: [main]
     signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
     state: present

@@ -88,7 +88,7 @@
     path: /etc/ufw/before.rules
     regexp: '^-A ufw-before-output .*--sport {{ firewall_tailscale_port }} -j DROP'
     line: >-
-      -A ufw-before-output -o {{ ansible_default_ipv4.interface }}
+      -A ufw-before-output -o {{ ansible_facts['default_ipv4'].interface }}
       -p udp --sport {{ firewall_tailscale_port }} -j DROP
     # Above the RELATED,ESTABLISHED accept, or established flows slip past it
     # and the leak continues for every already-open peer
@@ -106,15 +106,15 @@
     path: /etc/ufw/before6.rules
     regexp: '^-A ufw6-before-output .*--sport {{ firewall_tailscale_port }} -j DROP'
     line: >-
-      -A ufw6-before-output -o {{ ansible_default_ipv6.interface }}
+      -A ufw6-before-output -o {{ ansible_facts['default_ipv6'].interface }}
       -p udp --sport {{ firewall_tailscale_port }} -j DROP
     insertbefore: '^-A ufw6-before-output -m conntrack --ctstate RELATED,ESTABLISHED'
     firstmatch: true
     backup: true
   when:
     - firewall_hide_tailscale_direct
-    - ansible_default_ipv6.address is defined
-    - ansible_default_ipv6.address | length > 0
+    - ansible_facts['default_ipv6'].address is defined
+    - ansible_facts['default_ipv6'].address | length > 0
   notify: Reload ufw
 
 - name: Enable ufw

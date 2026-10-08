@@ -16,7 +16,7 @@
     install_python_debian: true
     types: [deb]
     uris: https://pkg.cloudflareclient.com/
-    suites: "{{ ansible_distribution_release }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
     components: [main]
     signed_by: /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
     state: present

@@ -46,8 +46,8 @@
   ansible.builtin.shell:
     cmd: >-
       umask 077 &&
-      sqlite3 {{ xui_db }} ".backup '{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}'"
-    creates: "{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+      sqlite3 {{ xui_db }} ".backup '{{ xui_db }}.bak-{{ ansible_facts['date_time'].iso8601_basic_short }}'"
+    creates: "{{ xui_db }}.bak-{{ ansible_facts['date_time'].iso8601_basic_short }}"
   when:
     - xui_install_pending
     - xui_db_present.stat.exists
@@ -214,8 +214,8 @@
   ansible.builtin.shell:
     cmd: >-
       umask 077 &&
-      sqlite3 {{ xui_db }} ".backup '{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}'"
-    creates: "{{ xui_db }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+      sqlite3 {{ xui_db }} ".backup '{{ xui_db }}.bak-{{ ansible_facts['date_time'].iso8601_basic_short }}'"
+    creates: "{{ xui_db }}.bak-{{ ansible_facts['date_time'].iso8601_basic_short }}"
   when: not xui_binding_matches
 
 # The panel must answer on the tunnel address only. Binding it to 0.0.0.0 and
