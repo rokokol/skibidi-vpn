@@ -23,7 +23,7 @@ ansible-lint                 # must stay green at the production profile
 ./tests/no-secrets.sh
 ./tests/falsify-secrets.sh   # plant five secrets in a throwaway copy, require red
 nix develop .#ci -c python3 -m unittest discover -s tests   # the report, on synthetic data
-nix develop .#ci -c python3 tests/falsify.py                # break each report guard, require red
+nix develop .#ci -c scripts/t.sh falsify -d tests/defects.sh -- python3 -m unittest discover -s tests -q   # break each guard in tests/defects.sh, require red; needs a clean tree
 nix flake check
 molecule test                # real Ubuntu VM under KVM
 ```

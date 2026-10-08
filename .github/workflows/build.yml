@@ -80,8 +80,8 @@ jobs:
 
       # Proves the suite would fail if the generator broke — a green suite
       # that cannot go red is not evidence
-      - name: Falsification harness
-        run: nix develop .#ci -c python3 tests/falsify.py
+      - name: Falsification
+        run: nix develop .#ci -c scripts/t.sh falsify -d tests/defects.sh -- python3 -m unittest discover -s tests -q
 
       - name: yamllint
         run: nix develop .#ci -c yamllint --strict .
