@@ -23,6 +23,18 @@ metrics_push_port: 9091
 # group, and a second writer would be wiped by it or leave stale series behind
 metrics_push_textfile: /var/lib/skibidi-report/traffic.prom
 
+# How often the newest samples, the master's traffic and the attackers reach
+# the station, apart from the sampling above. A push reads the store and adds
+# no row to it, so a short interval costs the store nothing
+metrics_push_interval: 1min
+
+# fail2ban's own log, and the jails whose findings are attacks. The push names
+# the busiest addresses of the day and the latest bans in them. A jail that
+# bans the operator's own clients for their device count, or recidive, whose
+# findings are the bans of other jails, does not belong here
+metrics_fail2ban_log: /var/log/fail2ban.log
+metrics_attack_jails: [sshd]
+
 # Where the push target is written for the units that push. It holds no
 # secret: the password stays in the backup role's root-only file
 metrics_push_env_file: /etc/skibidi/push.env
@@ -66,6 +78,7 @@ metrics_watched_timers:
   - skibidi-check.timer
   - xray-geodata-update.timer
   - skibidi-metrics.timer
+  - skibidi-push.timer
 
 # Units whose restart counters are sampled and pushed. A service
 # that restarted forty times without ever being down at check time is invisible

@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Push to the station between two samples
+
+[Timer]
+OnBootSec={{ metrics_boot_delay }}
+OnUnitActiveSec={{ metrics_push_interval }}
+# Without it systemd may fire a short timer up to a minute late
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

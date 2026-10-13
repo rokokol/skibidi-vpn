@@ -333,6 +333,98 @@ def traffic_text(environ, taken, now):
     return text
 
 
+# Who knocks: the attempts of the last day and the bans in it, read from
+# fail2ban's own log when the push runs. Only the busiest few addresses are
+# pushed, because every address is a series of its own at the station
+ATTACK_WINDOW_SECONDS = 86400
+ATTACK_TOP = 10
+LOG_BLOCK = 1 << 16
+F2B_LINE = re.compile(
+    r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ fail2ban\.\w+ +\[\d+\]: +\w+ +\[([^]]+)\] (Found|Ban) (\S+)"
+)
+F2B_STAMP = re.compile(rb"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),")
+
+
+def log_stamp(text) -> float | None:
+    """The time of a log line, which fail2ban writes in local time"""
+    try:
+        return time.mktime(time.strptime(text, "%Y-%m-%d %H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def log_since(path: Path, cutoff: float) -> list[tuple]:
+    """(time, jail, event, address) of each finding and ban written at or
+    after cutoff. The log is read back from its end only as far as the
+    cutoff, because it runs to weeks and this runs every minute"""
+    with path.open("rb") as handle:
+        position = handle.seek(0, os.SEEK_END)
+        data = b""
+        while position > 0:
+            step = min(LOG_BLOCK, position)
+            position -= step
+            handle.seek(position)
+            data = handle.read(step) + data
+            # A block that starts mid-line starts with a fragment, which has no
+            # whole stamp and so is never taken for the oldest line
+            first = next((match for match in map(F2B_STAMP.match, data.split(b"\n")) if match), None)
+            stamp = log_stamp(first.group(1).decode()) if first else None
+            if stamp is not None and stamp < cutoff:
+                break
+    found = []
+    for raw in data.decode(errors="replace").splitlines():
+        match = F2B_LINE.match(raw)
+        stamp = log_stamp(match.group(1)) if match else None
+        if match and stamp is not None and stamp >= cutoff:
+            found.append((stamp, match.group(2), match.group(3), match.group(4)))
+    return found
+
+
+def attacker_families(environ, now):
+    """The busiest addresses of the day by attempts, and the latest bans, in
+    the jails that face attackers. A jail that bans the operator's own
+    clients, or one that reads fail2ban's own bans as its findings, would
+    count the wrong people, so the role names the jails"""
+    path = environ.get("SKIBIDI_FAIL2BAN_LOG")
+    jails = set(environ.get("SKIBIDI_ATTACK_JAILS", "").split())
+    if not path or not jails:
+        return []
+    attempts: dict = {}
+    bans: dict = {}
+    for candidate in (Path(f"{path}.1"), Path(path)):
+        try:
+            events = log_since(candidate, now - ATTACK_WINDOW_SECONDS)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            print(f"push: the fail2ban log is left out: {error}", file=sys.stderr)
+            continue
+        for stamp, jail, event, address in events:
+            if jail not in jails:
+                continue
+            if event == "Found":
+                attempts[address] = attempts.get(address, 0) + 1
+            else:
+                bans[(jail, address)] = max(bans.get((jail, address), 0.0), stamp)
+    skibidi_push = push_library()
+    families = []
+    if attempts:
+        busiest = sorted(attempts.items(), key=lambda item: (-item[1], item[0]))[:ATTACK_TOP]
+        families.append(skibidi_push.family(
+            "vpn_fail2ban_top_attempts", "gauge",
+            "Failed attempts in the last day of the addresses that tried most",
+            [({"ip": address}, float(count)) for address, count in busiest],
+        ))
+    if bans:
+        latest = sorted(bans.items(), key=lambda item: -item[1])[:ATTACK_TOP]
+        families.append(skibidi_push.family(
+            "vpn_fail2ban_recent_ban_timestamp_seconds", "gauge",
+            "When each of the latest banned addresses was banned",
+            [({"jail": jail, "ip": address}, stamp) for (jail, address), stamp in latest],
+        ))
+    return families
+
+
 def push_families(rows, ufw_total, problems=None):
     """The dashboard's view of the newest rows: (ts, metric, detail, value)
     in, Prometheus families out"""
@@ -397,6 +489,7 @@ def push_latest(now_us: int) -> int:
             ).fetchall()
             total = state_value(connection, UFW_TOTAL)
         families = push_families(rows, None if total is None else float(total), open_problems(os.environ))
+        families += attacker_families(os.environ, time.time())
         body = skibidi_push.render(families) + traffic_text(
             os.environ, {item["name"] for item in families}, time.time()
         )

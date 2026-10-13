@@ -57,6 +57,14 @@ checker_watched_timers:
     max_silence_hours: 48
   - name: skibidi-metrics.timer
     max_silence_hours: 2
+  # Every minute. The sampling still pushes every ten, so a stopped push timer
+  # would only make the dashboard ten times slower, and nobody would notice it
+  - name: skibidi-push.timer
+    max_silence_hours: 1
+  # Every minute, on the master only. A stopped one leaves the dashboard
+  # without traffic, since the push leaves out a file nobody refreshed
+  - name: skibidi-traffic.timer
+    max_silence_hours: 1
   # Daily with an hour of scatter, so a gap past 25 hours is a missed day.
   # Installed only where the optional backup channel is on
   - name: skibidi-backup.timer

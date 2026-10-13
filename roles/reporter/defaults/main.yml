@@ -4,8 +4,8 @@
 # it, and the master already holds the file
 reporter_panel_db: "{{ xui_db | default('/etc/x-ui/x-ui.db') }}"
 
-# How often the panel's traffic is written for the collector to add to its
-# push. The collector pushes every ten minutes and leaves out a file older
-# than its window, so this has to stay well inside it. Where the file is lives
-# with the collector, as metrics_push_textfile
-reporter_traffic_interval: 10min
+# How often the panel's traffic is written for the push to add. The push runs
+# every metrics_push_interval, so the dashboard's traffic is as fresh as the
+# slower of the two. Where the file is lives with the collector, as
+# metrics_push_textfile
+reporter_traffic_interval: 1min

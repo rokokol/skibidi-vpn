@@ -75,6 +75,8 @@
   loop:
     - skibidi-metrics.service
     - skibidi-metrics.timer
+    - skibidi-push.service
+    - skibidi-push.timer
     - skibidi-metrics-api.socket
     - skibidi-metrics-api@.service
   register: metrics_units
@@ -85,11 +87,14 @@
 
 # Skipped in check mode: the unit it enables is written by this same play,
 # and a dry run deliberately does not write it
-- name: Enable the timer
+- name: Enable the timers
   ansible.builtin.systemd_service:
-    name: skibidi-metrics.timer
+    name: "{{ item }}"
     enabled: true
     state: started
+  loop:
+    - skibidi-metrics.timer
+    - skibidi-push.timer
   when: not ansible_check_mode
 
 # A node is never deployed into a state where its own sampler cannot run; the

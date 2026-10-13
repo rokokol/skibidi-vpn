@@ -72,11 +72,11 @@ The collector, `roles/metrics/files/skibidi-metrics.py`, is the list: each probe
 
 ## The push
 
-The same numbers leave the node a second way, for the station's dashboard. After each collection the collector pushes the newest value of every series to the Prometheus Pushgateway of the station that receives the node's backups. The master pushes the panel's traffic besides. A node whose file has no `backup_url` pushes nothing, and says so once in its journal
+The same numbers leave the node a second way, for the station's dashboard. The collector's `push` command sends the newest value of every series to the Prometheus Pushgateway of the station that receives the node's backups, after each collection and on a timer of its own every `metrics_push_interval`. The push adds no row to the store, so its interval is free of the sampling's. The master pushes the panel's traffic besides, and every node pushes who knocks on it. A node whose file has no `backup_url` pushes nothing, and says so once in its journal
 
 - The station is the backup station and the account is the backup account. `backup_url` names the host, `backup_user` the login, and the password is the backup role's root-only file `rest-password`. The Pushgateway's port is `metrics_push_port`, which the examples below call `9091`. The role writes the target to `metrics_push_env_file` for the units to read, and no secret is in it
 - A push is `PUT /metrics/job/vpn/instance/<account>` with HTTP basic auth as that account. The station refuses any other path, any read, and an instance that is not the login. The job is always `vpn`, and a node has one group, so the station sees `instance=<account>` on every series and nothing about the path changed
-- `PUT` replaces the whole group, and the collector is its only writer. A problem that was solved, a jail that went away and a traffic file that stopped arriving are missing from the next body and leave the station with it. A second writer would be wiped by every push or leave stale series behind, which is why the master's reporter writes its traffic to a file and the collector adds the file to its body
+- `PUT` replaces the whole group, and the collector's `push` is its only writer. A problem that was solved, a jail that went away and a traffic file that stopped arriving are missing from the next body and leave the station with it. A second writer would be wiped by every push or leave stale series behind, which is why the master's reporter writes its traffic to a file and the collector adds the file to its body
 - Plain HTTP is accepted for a station inside the tunnel ranges and HTTPS anywhere, by the same rule as the backup. The push asks `skibidi-backup target` before it sends the password
 - The body is the Prometheus text format, every name starts with `vpn_`, and no node name is in a metric name. The label that identifies the node is the instance
 - A push at least every quarter hour is the contract: the station alerts when `push_time_seconds` of a node is older than an hour. A push that fails is a line in the journal and costs no sample
@@ -106,13 +106,24 @@ The newest sample of each series that is less than two hours old. A probe that s
 
 The firewall drops are counted per interval in the store. The push turns them into a running total that the collector keeps in the store's state, because a dashboard cannot add up an interval count that arrives again with every push
 
-### What the master adds
+### Who knocks
 
-The reporter's own timer writes the panel's traffic to `metrics_push_textfile` on a master that names a station, and the collector adds the file to its body, in the same group as the master's samples. A file older than the push window, or one the station would refuse, is left out with a line in the journal. A panel that has counted nothing, or does not answer, leaves no file
+The push reads fail2ban's own log, `metrics_fail2ban_log`, back to a day before the push, in the jails `metrics_attack_jails` names. Those are the jails that face attackers: the panel's address-limit jail bans the owner's own clients, and the findings of recidive are the bans of other jails. A push names a few addresses only, because each address is a series of its own at the station
 
 | Metric | Type | Labels |
 | --- | --- | --- |
-| `vpn_inbound_traffic_bytes_total` | counter | `inbound`, `direction` |
+| `vpn_fail2ban_top_attempts` | gauge | `ip` |
+| `vpn_fail2ban_recent_ban_timestamp_seconds` | gauge | `jail`, `ip` |
+
+`vpn_fail2ban_top_attempts` is the number of failed attempts in the last day of each of the ten addresses that tried most. `vpn_fail2ban_recent_ban_timestamp_seconds` is the time of each of the ten latest bans in the last day, and an address banned twice is one series at its latest ban. A ban that fail2ban restores after a restart is not a new ban. A node without the log, or with no attempt in the day, pushes neither family
+
+### What the master adds
+
+The reporter's own timer writes the panel's traffic to `metrics_push_textfile` on a master that names a station, every `reporter_traffic_interval`, and the push adds the file to its body, in the same group as the master's samples. A file older than the push window, or one the station would refuse, is left out with a line in the journal. A panel that has counted nothing, or does not answer, leaves no file
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `vpn_inbound_traffic_bytes_total` | counter | `node`, `inbound`, `direction` |
 | `vpn_client_traffic_bytes_total` | counter | `client`, `direction` |
 
-`inbound` is the panel's remark, and inbounds that share a remark are added up under it. `direction` is `up` or `down`. `client` is the label the panel carries, which this repository already names in its letters and snapshots as the owner's own handle. A UUID, a subscription id or a key is never a label. The panel resets its counters when the owner does, and a reset is an ordinary counter reset
+`node` is the node the inbound runs on, as the panel names it. The master's own inbounds carry no node in the panel, so they take the master's inventory name. `inbound` is the panel's remark, and inbounds on one node that share a remark are added up under it. `direction` is `up` or `down`. `client` is the label the panel carries, which this repository already names in its letters and snapshots as the owner's own handle. A UUID, a subscription id or a key is never a label. The panel resets its counters when the owner does, and a reset is an ordinary counter reset

@@ -64,6 +64,11 @@ def env_file(text: str) -> dict:
     return {key: value.strip('"') for key, value in pairs}
 
 
+def minutes(span: str) -> int:
+    """A systemd time span the roles write, such as 1min or 10min, in minutes"""
+    return int(re.fullmatch(r"(\d+)min", span).group(1))
+
+
 def tasks(role: str, name: str = "main.yml") -> list:
     return yaml.safe_load((ROLES / role / "tasks" / name).read_text())
 
@@ -232,11 +237,11 @@ class TestTrafficUnits(unittest.TestCase):
     def setUp(self):
         self.values = defaults("metrics", "reporter")
 
-    def test_the_master_writes_the_traffic_on_its_own_timer_often_enough_for_the_collector(self):
+    def test_the_master_writes_the_traffic_as_often_as_the_push_runs(self):
+        # The dashboard's traffic is as fresh as the slower of the two
         timer = unit(render("reporter", "skibidi-traffic.timer.j2", self.values))["Timer"]
-        minutes = int(re.match(r"(\d+)min", timer["OnUnitActiveSec"]).group(1))
-        self.assertLessEqual(minutes + 1, 15, "the collector leaves out a file older than its window, "
-                             "and pushes every ten minutes")
+        self.assertLessEqual(minutes(timer["OnUnitActiveSec"]), minutes(self.values["metrics_push_interval"]))
+        self.assertNotIn("RandomizedDelaySec", timer, "a scatter of a minute doubles a one-minute interval")
 
     def test_the_unit_takes_the_file_to_write_from_the_same_file_as_the_collector(self):
         values = self.values
@@ -262,6 +267,52 @@ class TestTrafficUnits(unittest.TestCase):
         self.assertEqual(len(removals), 1)
         self.assertIn("length > 0", str(installs[0]["when"]))
         self.assertIn("length == 0", str(removals[0]["when"]))
+
+
+class TestPushUnits(unittest.TestCase):
+    """The push runs every minute on its own timer, apart from the sampling"""
+
+    def setUp(self):
+        self.values = defaults("metrics", "backup", "checker")
+
+    def test_the_push_runs_every_minute_and_the_sampling_stays_slow(self):
+        timer = unit(render("metrics", "skibidi-push.timer.j2", self.values))["Timer"]
+        self.assertEqual(minutes(timer["OnUnitActiveSec"]), 1)
+        self.assertGreater(minutes(self.values["metrics_interval"]), 1, "every sample is a row kept for months")
+
+    def test_the_push_unit_pushes_with_the_push_settings(self):
+        service = unit(render("metrics", "skibidi-push.service.j2", self.values))["Service"]
+        self.assertEqual(service["ExecStart"], "/usr/local/sbin/skibidi-metrics push")
+        self.assertEqual(service["EnvironmentFile"], f"-{self.values['metrics_push_env_file']}")
+
+    def test_a_node_that_names_no_station_leaves_no_failed_unit(self):
+        # The push says 3 for no station, and a failed unit is itself an alert
+        service = unit(render("metrics", "skibidi-push.service.j2", self.values))["Service"]
+        self.assertIn("3", service["SuccessExitStatus"].split())
+
+    def test_the_push_timer_is_installed_enabled_and_watched(self):
+        main = tasks("metrics")
+        installs = [task for task in main if task.get("name") == "Install the units"]
+        self.assertIn("skibidi-push.timer", installs[0]["loop"])
+        enables = [task for task in main if task.get("name") == "Enable the timers"]
+        self.assertIn("skibidi-push.timer", enables[0]["loop"])
+        names = {timer["name"] for timer in self.values["checker_watched_timers"]}
+        self.assertIn("skibidi-push.timer", names)
+        self.assertIn("skibidi-traffic.timer", names)
+
+    def test_the_master_names_its_own_inbounds_as_the_fleet_names_it(self):
+        pushed = env_file(render("metrics", "push.env.j2", dict(self.values, backup_url="http://100.64.0.2:8000")))
+        self.assertEqual(pushed["SKIBIDI_NODE_NAME"], "node-a")
+
+    def test_the_push_is_told_where_the_attacks_are(self):
+        pushed = env_file(render("metrics", "push.env.j2", dict(self.values, backup_url="http://100.64.0.2:8000")))
+        self.assertEqual(pushed["SKIBIDI_FAIL2BAN_LOG"], self.values["metrics_fail2ban_log"])
+        jails = pushed["SKIBIDI_ATTACK_JAILS"].split()
+        self.assertIn("sshd", jails)
+        # The panel's jail bans the operator's own clients, and recidive's
+        # findings are other jails' bans
+        self.assertNotIn("3x-ipl", jails)
+        self.assertNotIn("recidive", jails)
 
 
 class TestTheLetterIsGone(unittest.TestCase):

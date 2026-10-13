@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import socket
 import sqlite3
 import sys
 import tempfile
@@ -145,19 +146,29 @@ def client_traffic(client: dict) -> tuple[int, int, int]:
 # ---------------------------------------------------------------- traffic
 
 
-def panel_traffic(inbounds: list[dict]) -> dict:
+def db_node_names(connection: sqlite3.Connection) -> dict:
+    """The name of each node the panel drives, by the id its inbounds carry"""
+    try:
+        rows = connection.execute("SELECT id, name FROM nodes").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {row["id"]: row["name"] for row in rows}
+
+
+def panel_traffic(inbounds: list[dict], node_names: dict, own_name: str) -> dict:
     """Cumulative bytes per inbound and per client, as the panel counts them.
 
-    An inbound is named by its remark. The panel lets two inbounds on two
-    nodes share one, so their bytes add up under it, which is also what a
-    reader of the dashboard wants to see: the traffic of "SE-exit".
+    An inbound is named by the node it runs on and by its remark. The
+    master's own inbounds carry no node in the panel, so they take own_name.
+    The panel lets two inbounds on one node share a remark, and their bytes
+    add up under it, because the station refuses a repeated label set.
     """
     traffic: dict = {"inbounds": {}, "clients": {}}
     for inbound in inbounds:
-        name = str(inbound.get("remark") or "") or (
-            f"{inbound.get('nodeId') or 0}/{inbound.get('protocol')}/{inbound.get('port')}"
-        )
-        total = traffic["inbounds"].setdefault(name, {"up": 0, "down": 0})
+        node_id = inbound.get("nodeId")
+        node = own_name if node_id is None else str(node_names.get(node_id, node_id))
+        name = str(inbound.get("remark") or "") or f"{inbound.get('protocol')}/{inbound.get('port')}"
+        total = traffic["inbounds"].setdefault((node, name), {"up": 0, "down": 0})
         total["up"] += int(inbound.get("up") or 0)
         total["down"] += int(inbound.get("down") or 0)
         for client in inbound.get("clientStats") or []:
@@ -170,14 +181,14 @@ def panel_traffic(inbounds: list[dict]) -> dict:
 
 def traffic_families(traffic: dict) -> list[dict]:
     families = []
-    for name, label, rows, help_text in (
-        ("vpn_inbound_traffic_bytes_total", "inbound", traffic["inbounds"],
-         "Bytes an inbound carried, as the panel counts them"),
-        ("vpn_client_traffic_bytes_total", "client", traffic["clients"],
-         "Bytes a client used, as the panel counts them"),
+    for name, labels, rows, help_text in (
+        ("vpn_inbound_traffic_bytes_total", lambda key: {"node": key[0], "inbound": key[1]},
+         traffic["inbounds"], "Bytes an inbound carried, as the panel counts them"),
+        ("vpn_client_traffic_bytes_total", lambda key: {"client": key},
+         traffic["clients"], "Bytes a client used, as the panel counts them"),
     ):
         samples = [
-            ({label: key, "direction": direction}, float(row[direction]))
+            ({**labels(key), "direction": direction}, float(row[direction]))
             for key, row in rows.items()
             for direction in ("up", "down")
         ]
@@ -199,7 +210,10 @@ def traffic(config: dict) -> int:
     try:
         connection = open_panel_db(config["panel"]["db"])
         try:
-            families = traffic_families(panel_traffic(db_inbounds(connection)))
+            own_name = os.environ.get("SKIBIDI_NODE_NAME") or socket.gethostname()
+            families = traffic_families(
+                panel_traffic(db_inbounds(connection), db_node_names(connection), own_name)
+            )
         finally:
             connection.close()
     except (PanelError, sqlite3.Error) as error:

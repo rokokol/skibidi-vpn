@@ -41,14 +41,24 @@ CHECK_DEFAULTS='roles/checker/defaults/main.yml'
 # The reporter
 
 defect 'traffic/remark-collision' "$REPORT" \
-  '        total = traffic["inbounds"].setdefault(name, {"up": 0, "down": 0})' \
-  '        total = traffic["inbounds"][name] = {"up": 0, "down": 0}' \
+  '        total = traffic["inbounds"].setdefault((node, name), {"up": 0, "down": 0})' \
+  '        total = traffic["inbounds"][(node, name)] = {"up": 0, "down": 0}' \
   'two inbounds with one remark push the last one alone, or a body the station refuses'
 
 defect 'traffic/credential-in-label' "$REPORT" \
-  '        name = str(inbound.get("remark") or "") or (' \
-  '        name = str(inbound.get("settings")) or (' \
+  '        name = str(inbound.get("remark") or "") or' \
+  '        name = str(inbound.get("settings")) or' \
   'every client UUID and subscription id goes to the station in a label'
+
+defect 'traffic/every-inbound-on-the-master' "$REPORT" \
+  'node = own_name if node_id is None else str(node_names.get(node_id, node_id))' \
+  'node = own_name' \
+  "the dashboard shows each node's inbounds as the master's"
+
+defect 'traffic/node-by-id' "$REPORT" \
+  'node = own_name if node_id is None else str(node_names.get(node_id, node_id))' \
+  'node = own_name if node_id is None else str(node_id)' \
+  'the dashboard names a node by a number nobody knows'
 
 defect 'traffic/old-file-kept-when-empty' "$REPORT" \
   '    if not families:
@@ -337,6 +347,41 @@ defect 'push/oldest-wins' "$PUSH" \
   'if key not in newest or ts >= newest[key][0]:' \
   'if key not in newest or ts <= newest[key][0]:' \
   'the dashboard shows the oldest sample of the window as the current one'
+
+defect 'attackers/any-jail' "$METRICS" \
+  '            if jail not in jails:' \
+  '            if False:' \
+  "the operator's own clients, banned for their device count, show up as attackers"
+
+defect 'attackers/no-day-limit' "$METRICS" \
+  'if match and stamp is not None and stamp >= cutoff:' \
+  'if match and stamp is not None:' \
+  'attempts from weeks ago are counted as the last day'
+
+defect 'attackers/one-block-only' "$METRICS" \
+  '            if stamp is not None and stamp < cutoff:' \
+  '            if True:' \
+  'a busy day longer than one block of the log loses its older half'
+
+defect 'attackers/all-addresses' "$METRICS" \
+  'busiest = sorted(attempts.items(), key=lambda item: (-item[1], item[0]))[:ATTACK_TOP]' \
+  'busiest = sorted(attempts.items(), key=lambda item: (-item[1], item[0]))' \
+  'every address that ever knocked becomes a series of its own at the station'
+
+defect 'attackers/oldest-bans' "$METRICS" \
+  'latest = sorted(bans.items(), key=lambda item: -item[1])[:ATTACK_TOP]' \
+  'latest = sorted(bans.items(), key=lambda item: item[1])[:ATTACK_TOP]' \
+  'the table of latest bans shows the oldest ones of the day'
+
+defect 'attackers/first-ban-wins' "$METRICS" \
+  'bans[(jail, address)] = max(bans.get((jail, address), 0.0), stamp)' \
+  'bans.setdefault((jail, address), stamp)' \
+  'an address banned again shows the time of its first ban'
+
+defect 'attackers/restored-ban-counted' "$METRICS" \
+  '\] (Found|Ban) (\S+)"' \
+  '\] (?:Restore )?(Found|Ban) (\S+)"' \
+  'a restart of fail2ban fills the table of latest bans with old bans'
 
 defect 'collector/failed-push-fails-collect' "$METRICS" \
   '    if push:

@@ -300,6 +300,126 @@ class TestTextfile(PushCase):
         self.assertEqual(self.collect(), (0, ""))
 
 
+class TestAttackers(PushCase):
+    """Who knocks, read from fail2ban's own log at the moment of the push"""
+
+    def setUp(self):
+        super().setUp()
+        self.log = self.dir / "fail2ban.log"
+        os.environ["SKIBIDI_FAIL2BAN_LOG"] = str(self.log)
+        os.environ["SKIBIDI_ATTACK_JAILS"] = "sshd"
+        self.rows = [("load1", "", 0.5)]
+        self.now = time.time()
+
+    def line(self, age, jail, event, address):
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.now - age))
+        source = "filter " if event == "Found" else "actions"
+        level = "INFO   " if event == "Found" else "NOTICE "
+        tail = f" - {stamp}" if event == "Found" else ""
+        return f"{stamp},123 fail2ban.{source}        [430]: {level} [{jail}] {event} {address}{tail}\n"
+
+    def write(self, path, lines):
+        path.write_text("".join(lines))
+
+    def attempts(self):
+        families = self.pushed()
+        return {labels["ip"]: value
+                for labels, value in families.get("vpn_fail2ban_top_attempts", {"samples": []})["samples"]}
+
+    def bans(self):
+        families = self.pushed()
+        return families.get("vpn_fail2ban_recent_ban_timestamp_seconds", {"samples": []})["samples"]
+
+    def test_the_attempts_of_the_last_day_are_counted_per_address(self):
+        self.write(self.log, [self.line(600, "sshd", "Found", "192.0.2.1")] * 3
+                   + [self.line(60, "sshd", "Found", "192.0.2.2")])
+        self.collect()
+        self.assertEqual(self.attempts(), {"192.0.2.1": 3.0, "192.0.2.2": 1.0})
+        self.assertEqual(self.pushed()["vpn_fail2ban_top_attempts"]["type"], "gauge")
+
+    def test_an_attempt_older_than_a_day_is_not_counted(self):
+        self.write(self.log, [self.line(25 * 3600, "sshd", "Found", "192.0.2.1"),
+                              self.line(60, "sshd", "Found", "192.0.2.2")])
+        self.collect()
+        self.assertEqual(self.attempts(), {"192.0.2.2": 1.0})
+
+    def test_a_jail_that_is_not_an_attack_is_left_out(self):
+        # 3x-ipl bans the operator's own clients, and recidive's findings are
+        # bans of other jails, not attempts
+        self.write(self.log, [self.line(60, "3x-ipl", "Found", "198.51.100.7"),
+                              self.line(60, "recidive", "Found", "192.0.2.1"),
+                              self.line(60, "3x-ipl", "Ban", "198.51.100.7"),
+                              self.line(60, "sshd", "Found", "192.0.2.1")])
+        self.collect()
+        self.assertEqual(self.attempts(), {"192.0.2.1": 1.0})
+        self.assertEqual(self.bans(), [])
+
+    def test_only_the_busiest_ten_are_pushed(self):
+        lines = []
+        for index in range(12):
+            lines += [self.line(60, "sshd", "Found", f"192.0.2.{index}")] * (index + 1)
+        self.write(self.log, lines)
+        self.collect()
+        self.assertEqual(sorted(self.attempts()), sorted(f"192.0.2.{index}" for index in range(2, 12)))
+
+    def test_the_rotated_log_still_counts_inside_the_day(self):
+        self.write(Path(f"{self.log}.1"), [self.line(3600, "sshd", "Found", "192.0.2.1")])
+        self.write(self.log, [self.line(60, "sshd", "Found", "192.0.2.1")])
+        self.collect()
+        self.assertEqual(self.attempts(), {"192.0.2.1": 2.0})
+
+    def test_a_day_that_spans_many_blocks_of_the_log_is_counted_whole(self):
+        # The log is read back from its end in blocks, and no line on the
+        # border of two blocks may be lost or counted twice
+        old = [self.line(3 * 86400, "sshd", "Found", "192.0.2.9")] * 20000
+        recent = [self.line(600, "sshd", "Found", "192.0.2.1")] * 3001
+        self.write(self.log, old + recent)
+        self.collect()
+        self.assertEqual(self.attempts(), {"192.0.2.1": 3001.0})
+
+    def test_the_latest_bans_carry_their_time_and_jail(self):
+        self.write(self.log, [self.line(7200, "sshd", "Ban", "192.0.2.1"),
+                              self.line(600, "sshd", "Restore Ban", "192.0.2.3"),
+                              self.line(60, "sshd", "Ban", "192.0.2.2")])
+        self.collect()
+        bans = {labels["ip"]: (labels["jail"], value) for labels, value in self.bans()}
+        self.assertEqual(set(bans), {"192.0.2.1", "192.0.2.2"}, "a restored ban is not a new one")
+        self.assertEqual(bans["192.0.2.2"][0], "sshd")
+        self.assertAlmostEqual(bans["192.0.2.2"][1], self.now - 60, delta=2)
+
+    def test_an_address_banned_twice_is_one_series_at_its_latest_ban(self):
+        self.write(self.log, [self.line(7200, "sshd", "Ban", "192.0.2.1"),
+                              self.line(60, "sshd", "Ban", "192.0.2.1")])
+        self.collect()
+        bans = self.bans()
+        self.assertEqual(len(bans), 1)
+        self.assertAlmostEqual(bans[0][1], self.now - 60, delta=2)
+
+    def test_only_the_last_ten_bans_are_pushed(self):
+        self.write(self.log, [self.line(1000 - index, "sshd", "Ban", f"192.0.2.{index}") for index in range(12)])
+        self.collect()
+        self.assertEqual(sorted(labels["ip"] for labels, _ in self.bans()),
+                         sorted(f"192.0.2.{index}" for index in range(2, 12)))
+
+    def test_the_push_command_carries_them_too(self):
+        self.write(self.log, [self.line(60, "sshd", "Found", "192.0.2.1")])
+        self.collect("--no-push")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual(self.module.main(["push"]), 0)
+        self.assertEqual(self.attempts(), {"192.0.2.1": 1.0})
+
+    def test_no_log_is_no_attackers_and_no_complaint(self):
+        self.assertEqual(self.collect(), (0, ""))
+        self.assertNotIn("vpn_fail2ban_top_attempts", self.pushed())
+
+    def test_a_line_of_another_shape_is_skipped(self):
+        self.write(self.log, ["garbage\n", "2026-13-99 nonsense [sshd] Found x\n",
+                              self.line(60, "sshd", "Found", "192.0.2.1")])
+        self.assertEqual(self.collect()[0], 0)
+        self.assertEqual(self.attempts(), {"192.0.2.1": 1.0})
+
+
 class TestWhenItFails(PushCase):
     def test_a_refused_login_costs_the_push_and_nothing_else(self):
         self.login_file.write_text("wrong")

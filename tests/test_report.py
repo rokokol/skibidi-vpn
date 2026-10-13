@@ -35,7 +35,7 @@ specification.loader.exec_module(report)
 UUID = "11111111-2222-3333-4444-555555555555"
 
 
-def make_panel_db(extra_inbounds: bool = False) -> Path:
+def make_panel_db() -> Path:
     path = Path(tempfile.mkdtemp(prefix="skibidi-panel-")) / "x-ui.db"
     with sqlite3.connect(path) as db:
         db.executescript(f"""
@@ -53,12 +53,6 @@ def make_panel_db(extra_inbounds: bool = False) -> Path:
             INSERT INTO client_traffics VALUES (1, 1, 'Grandmother', 5, 7, 100, 0, 1, 1735680000000);
             INSERT INTO nodes VALUES (1, 'node-b', '', 'online', 1700000000, 42, 1.0, 20.0, '3.7.0', '25.1.1');
         """)
-        if extra_inbounds:
-            db.executescript("""
-                INSERT INTO inbounds VALUES (2, 1, 2, 'SE-exit', 1, 8443, 'trojan',
-                    '{"clients": []}', 3);
-                INSERT INTO client_traffics VALUES (2, 2, 'Mo', 100, 200, 0, 0, 1, 0);
-            """)
     return path
 
 
@@ -119,10 +113,22 @@ class TestGatherPanel(unittest.TestCase):
 class TestTraffic(unittest.TestCase):
     def families(self, db):
         connection = report.open_panel_db(str(db))
-        return report.traffic_families(report.panel_traffic(report.db_inbounds(connection)))
+        return report.traffic_families(report.panel_traffic(
+            report.db_inbounds(connection), report.db_node_names(connection), "master-a"))
 
     def by_name(self, families):
         return {item["name"]: item for item in families}
+
+    def inbound_down(self, db):
+        families = self.by_name(self.families(db))
+        return sorted(((pair[0]["node"], pair[0]["inbound"]), pair[1])
+                      for pair in families["vpn_inbound_traffic_bytes_total"]["samples"]
+                      if pair[0]["direction"] == "down")
+
+    def add_inbound(self, db, row_id, down, remark, node_id):
+        with sqlite3.connect(db) as connection:
+            connection.execute("INSERT INTO inbounds VALUES (?, 0, ?, ?, 1, ?, 'vless', '{}', ?)",
+                               (row_id, down, remark, 9000 + row_id, node_id))
 
     def test_traffic_is_per_inbound_and_per_client_in_both_directions(self):
         families = self.by_name(self.families(make_panel_db()))
@@ -130,19 +136,34 @@ class TestTraffic(unittest.TestCase):
         client = families["vpn_client_traffic_bytes_total"]
         self.assertEqual(inbound["type"], "counter")
         self.assertEqual(sorted(inbound["samples"], key=lambda pair: pair[0]["direction"]),
-                         [({"inbound": "SE-exit", "direction": "down"}, 20.0),
-                          ({"inbound": "SE-exit", "direction": "up"}, 10.0)])
+                         [({"node": "master-a", "inbound": "SE-exit", "direction": "down"}, 20.0),
+                          ({"node": "master-a", "inbound": "SE-exit", "direction": "up"}, 10.0)])
         self.assertEqual(sorted(client["samples"], key=lambda pair: pair[0]["direction"]),
                          [({"client": "Grandmother", "direction": "down"}, 7.0),
                           ({"client": "Grandmother", "direction": "up"}, 5.0)])
 
-    def test_two_inbounds_with_one_remark_add_up_instead_of_colliding(self):
-        # The station refuses a body that repeats a label set, and the panel
-        # lets two inbounds on two nodes share a remark
-        families = self.by_name(self.families(make_panel_db(extra_inbounds=True)))
-        down = [pair for pair in families["vpn_inbound_traffic_bytes_total"]["samples"]
-                if pair[0]["direction"] == "down"]
-        self.assertEqual(down, [({"inbound": "SE-exit", "direction": "down"}, 22.0)])
+    def test_an_inbound_is_named_by_the_node_it_runs_on(self):
+        # The master's own inbounds have no node in the panel, and the rest
+        # carry the id of the node the panel drives
+        db = make_panel_db()
+        self.add_inbound(db, 2, 5, "RU-entry", 1)
+        self.assertEqual(self.inbound_down(db), [(("master-a", "SE-exit"), 20.0), (("node-b", "RU-entry"), 5.0)])
+
+    def test_one_remark_on_two_nodes_is_two_series(self):
+        db = make_panel_db()
+        self.add_inbound(db, 2, 5, "SE-exit", 1)
+        self.assertEqual(self.inbound_down(db), [(("master-a", "SE-exit"), 20.0), (("node-b", "SE-exit"), 5.0)])
+
+    def test_two_inbounds_with_one_remark_on_one_node_add_up_instead_of_colliding(self):
+        # The station refuses a body that repeats a label set
+        db = make_panel_db()
+        self.add_inbound(db, 2, 2, "SE-exit", None)
+        self.assertEqual(self.inbound_down(db), [(("master-a", "SE-exit"), 22.0)])
+
+    def test_a_node_the_panel_no_longer_knows_is_named_by_its_id(self):
+        db = make_panel_db()
+        self.add_inbound(db, 2, 5, "Old", 7)
+        self.assertIn((("7", "Old"), 5.0), self.inbound_down(db))
 
     def test_no_credential_is_in_what_leaves(self):
         text = report.skibidi_push.render(self.families(make_panel_db()))

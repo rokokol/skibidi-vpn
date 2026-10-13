@@ -5,9 +5,8 @@ Description=Write the panel's traffic for the station regularly
 [Timer]
 OnBootSec=5min
 OnUnitActiveSec={{ reporter_traffic_interval }}
-# The collector leaves out a traffic file older than its window, so a run a
-# minute late costs nothing
-RandomizedDelaySec=1min
+# Without it systemd may fire a short timer up to a minute late
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target

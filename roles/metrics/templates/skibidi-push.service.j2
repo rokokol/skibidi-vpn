@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Push the newest samples, the master's traffic and the attackers to the station
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-metrics push
+# 3 is a node that names no station, which it says once and is not a failure
+SuccessExitStatus=3
+EnvironmentFile=-{{ metrics_push_env_file }}
+Environment=SKIBIDI_LIB={{ metrics_lib_dir }}
+Environment=SKIBIDI_METRICS_DB={{ metrics_db_dir }}/metrics.db
