@@ -203,11 +203,33 @@
     msg: "{{ checker_first_run.stdout_lines }}"
   when: not ansible_check_mode
 
+# The metrics role pushed its first sample before this check was installed,
+# so the station would read a missing record until the next collection. Exit 3
+# is a node that names no station; 1 is a push that failed, which the station's
+# own alert on a silent node raises, so neither fails the deploy
+- name: Tell the station what the check found, now
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --wait
+      - --pipe
+      - --collect
+      - --property=EnvironmentFile=-{{ metrics_push_env_file }}
+      - --setenv=SKIBIDI_LIB=/usr/local/lib/skibidi
+      - /usr/local/sbin/skibidi-metrics
+      - push
+  register: checker_first_push
+  changed_when: false
+  failed_when: checker_first_push.rc not in [0, 1, 3]
+  when: not ansible_check_mode
+
 # Exit 1 means it listed something still open, which a fresh node may well
 # have (a reboot, some updates) and which is not a failed deploy. Anything
 # else means the daily check itself could not run, and that is. Through
 # systemd-run with the unit's settings and without its OnFailure, so a deploy
-# mails nothing
+# mails nothing. --collect drops the transient unit even after exit 1, which
+# would otherwise stay among the failed units
 - name: Run the daily check once, now
   ansible.builtin.command:
     argv:
@@ -215,6 +237,7 @@
       - --quiet
       - --wait
       - --pipe
+      - --collect
       - --property=EnvironmentFile={{ checker_daily_env_file }}
       - /usr/local/sbin/skibidi-daily
   register: checker_daily_run

@@ -192,6 +192,22 @@ class TestDailyCheckUnits(unittest.TestCase):
         self.assertIn(f"--property=EnvironmentFile={{{{ checker_daily_env_file }}}}",
                       daily[0]["ansible.builtin.command"]["argv"])
 
+    def test_the_daily_run_of_a_deploy_leaves_no_failed_unit(self):
+        # Exit 1 lists what is open and passes the deploy, and a transient unit
+        # that exited 1 stays failed unless it is collected
+        daily = [task for task in tasks("checker") if task.get("name") == "Run the daily check once, now"]
+        self.assertIn("--collect", daily[0]["ansible.builtin.command"]["argv"])
+
+    def test_a_deploy_pushes_what_its_first_check_found(self):
+        # The metrics role pushes before the new check exists, so the station
+        # would read a missing record until the next collection
+        names = [task.get("name") for task in tasks("checker")]
+        push = names.index("Tell the station what the check found, now")
+        self.assertGreater(push, names.index("Run the checks once, now"))
+        argv = tasks("checker")[push]["ansible.builtin.command"]["argv"]
+        self.assertEqual(argv[-2:], ["/usr/local/sbin/skibidi-metrics", "push"])
+        self.assertIn("--property=EnvironmentFile=-{{ metrics_push_env_file }}", argv)
+
     def test_the_settings_name_every_variable_the_script_requires(self):
         script = (ROLES / "checker" / "files" / "skibidi-daily.py").read_text()
         required = re.search(r"REQUIRED = \((.*?)\)", script).group(1)
