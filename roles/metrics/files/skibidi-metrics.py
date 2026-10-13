@@ -10,6 +10,10 @@ fleet through it, over the tailnet.
 Counters that other software owns (fail2ban totals, unit restart counts) are
 stored as the cumulative values they are. Turning them into deltas is done at
 read time, because only the reader knows the window it is asking about.
+
+After each collection the newest value of every series is pushed to the
+station's Pushgateway, when the node names a station. `push` does the push
+alone. docs/metrics-api.md, "The push", is the contract.
 """
 
 from __future__ import annotations
@@ -101,6 +105,37 @@ DIMENSIONS = {
     "unit_restarts": "unit",
     "timer_last_fired": "timer",
 }
+
+
+# What the station's dashboard calls each metric, with its help text. The type
+# follows COUNTERS. A metric missing here is sampled and served by the API but
+# never pushed, and a test holds this table to the probes below
+PROMETHEUS = {
+    "load1": ("vpn_load1", "One-minute load average"),
+    "mem_used_ratio": ("vpn_memory_used_ratio", "Share of memory in use"),
+    "disk_used_ratio": ("vpn_disk_used_ratio", "Share of the root file system in use"),
+    "disk_total_bytes": ("vpn_disk_total_bytes", "Size of the root file system"),
+    "uptime_seconds": ("vpn_uptime_seconds", "Seconds since boot"),
+    "conntrack_used_ratio": ("vpn_conntrack_used_ratio", "Share of the connection tracking table in use"),
+    "conntrack_count": ("vpn_conntrack_entries", "Entries in the connection tracking table"),
+    "established_sockets": ("vpn_established_sockets", "TCP sockets in the ESTABLISHED state"),
+    "established_no_timer": (
+        "vpn_established_sockets_without_timer",
+        "ESTABLISHED sockets with no timer armed, the shape of the timeout bug",
+    ),
+    "f2b_failed_total": ("vpn_fail2ban_failed_total", "Failed attempts a fail2ban jail counted"),
+    "f2b_banned_total": ("vpn_fail2ban_banned_total", "Bans a fail2ban jail issued"),
+    "f2b_banned_now": ("vpn_fail2ban_banned", "Addresses a fail2ban jail holds banned now"),
+    "unit_restarts": ("vpn_unit_restarts_total", "Automatic restarts of a watched unit"),
+    "timer_last_fired": (
+        "vpn_timer_last_fired_timestamp_seconds",
+        "Unix time a watched timer last fired",
+    ),
+    "pkg_updates": ("vpn_pending_updates", "Package updates apt would install"),
+    "reboot_required": ("vpn_reboot_required", "1 when a package update asks for a reboot"),
+}
+
+UFW_TOTAL = "ufw_drops_total"
 
 
 def probe_load():
@@ -236,7 +271,143 @@ PROBES = [
 ]
 
 
-def collect() -> int:
+def state_value(connection: sqlite3.Connection, key: str):
+    row = connection.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_state(connection: sqlite3.Connection, key: str, value) -> None:
+    connection.execute(
+        "INSERT INTO state (key, value) VALUES (?, ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (key, str(value)),
+    )
+
+
+def push_library():
+    # Imported when a push needs it, so a node whose library has not arrived
+    # yet still samples and still serves its API
+    lib = os.environ.get("SKIBIDI_LIB", "/usr/local/lib/skibidi")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import skibidi_push
+
+    return skibidi_push
+
+
+def open_problems(environ):
+    """The urgent problems this node reports of itself, as (cause, summary),
+    or None where the node does not say where the check records them. They
+    are the failures the last skibidi-check left, read the way the daily list
+    reads them. A cause that repeats counts once: two series with one key
+    would be one alert twice"""
+    record = environ.get("SKIBIDI_CHECK_RESULT")
+    if not record:
+        return None
+    import skibidi_problems
+
+    found = {}
+    for cause, message in skibidi_problems.check_records(record, float(environ["SKIBIDI_CHECK_MAX_AGE_HOURS"])):
+        found.setdefault(cause, skibidi_problems.summary(message))
+    return list(found.items())
+
+
+def traffic_text(environ, taken, now):
+    """The master's traffic, a file the reporter writes, or "" when there is
+    none to add. A file nobody refreshed within the window is left out, so a
+    reporter that stopped does not keep old numbers on the dashboard, and a
+    file the station would refuse is left out with a line in the journal, so
+    it cannot take this node's sign of life with it"""
+    path = environ.get("SKIBIDI_PUSH_TEXTFILE")
+    if not path or not Path(path).exists():
+        return ""
+    skibidi_push = push_library()
+    try:
+        if now - Path(path).stat().st_mtime > skibidi_push.LATEST_WINDOW_SECONDS:
+            return ""
+        text = Path(path).read_text()
+        skibidi_push.validate_text(text, taken)
+    except (OSError, ValueError) as error:
+        print(f"push: the traffic file is left out: {error}", file=sys.stderr)
+        return ""
+    return text
+
+
+def push_families(rows, ufw_total, problems=None):
+    """The dashboard's view of the newest rows: (ts, metric, detail, value)
+    in, Prometheus families out"""
+    skibidi_push = push_library()
+    grouped: dict = {}
+    for (metric, detail), (_ts, value) in sorted(skibidi_push.latest(rows).items()):
+        if metric not in PROMETHEUS:
+            continue
+        label = DIMENSIONS.get(metric, "detail")
+        grouped.setdefault(metric, []).append(({label: detail} if detail else {}, value))
+    families = [
+        skibidi_push.family(
+            PROMETHEUS[metric][0],
+            "counter" if metric in COUNTERS else "gauge",
+            PROMETHEUS[metric][1],
+            samples,
+        )
+        for metric, samples in grouped.items()
+    ]
+    if ufw_total is not None:
+        families.append(skibidi_push.family(
+            "vpn_ufw_drops_total", "counter", "Packets the firewall dropped and logged", [({}, ufw_total)]
+        ))
+    # One series per open problem, and none when nothing is open. The push
+    # replaces the whole group, so a problem that was solved is missing from
+    # the next body and leaves the station with it
+    if problems:
+        families.append(skibidi_push.family(
+            "node_problem", "gauge",
+            "One unresolved problem this node reports of itself, by cause",
+            [({"key": cause, "summary": text}, 1) for cause, text in problems],
+        ))
+    return families
+
+
+def push_latest(now_us: int) -> int:
+    """Push the newest samples, the open problems and, on the master, the
+    traffic file, as the whole of this host's group. 0 when pushed, 3 when the
+    node names no station, 1 when the push failed. A failure is a line in the
+    journal, never a lost sample, and the station's alert on a stale push is
+    what raises it. The alert unit runs this and mails only when it is not 0"""
+    try:
+        skibidi_push = push_library()
+    except ImportError as error:
+        print(f"push: {error}", file=sys.stderr)
+        return 1
+    try:
+        station = skibidi_push.target(os.environ)
+        with connect() as connection:
+            if station is None:
+                # Said once, not every ten minutes: a node that names no
+                # station is a decision, and a journal line per run would
+                # bury the lines that are not
+                if state_value(connection, "push_unconfigured_noted") is None:
+                    print("push: this node names no backup station, so nothing is pushed", file=sys.stderr)
+                    set_state(connection, "push_unconfigured_noted", now_us)
+                return 3
+            connection.execute("DELETE FROM state WHERE key = 'push_unconfigured_noted'")
+            rows = connection.execute(
+                "SELECT ts_us, metric, detail, value FROM samples WHERE ts_us >= ?",
+                (now_us - skibidi_push.LATEST_WINDOW_SECONDS * 1_000_000,),
+            ).fetchall()
+            total = state_value(connection, UFW_TOTAL)
+        families = push_families(rows, None if total is None else float(total), open_problems(os.environ))
+        body = skibidi_push.render(families) + traffic_text(
+            os.environ, {item["name"] for item in families}, time.time()
+        )
+        skibidi_push.push_text(station, body)
+    except (skibidi_push.PushError, ValueError, sqlite3.Error) as error:
+        print(f"push: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def collect(push: bool = True) -> int:
     now_us = int(time.time() * 1_000_000)
     failed = []
     with connect() as connection:
@@ -260,13 +431,19 @@ def collect() -> int:
             "DELETE FROM samples WHERE ts_us < ?",
             (now_us - RETENTION_DAYS * 86400 * 1_000_000,),
         )
+        # The drops of a run are a count over its interval, which a dashboard
+        # cannot add up from pushes that repeat. The running total is a
+        # counter, and it grows by exactly what the run stored
+        counted = [value for _ts, metric, _detail, value in rows if metric == "ufw_drops"]
+        if counted:
+            total = float(state_value(connection, UFW_TOTAL) or 0) + sum(counted)
+            set_state(connection, UFW_TOTAL, total)
         # Advanced even when probes failed: freshness means the collector ran,
-        # and which metrics are missing is the report's question to answer
-        connection.execute(
-            "INSERT INTO state (key, value) VALUES ('collected_through_us', ?) "
-            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            (str(now_us),),
-        )
+        # and which metrics are missing is the reader's question to answer
+        set_state(connection, "collected_through_us", now_us)
+    # After the commit, so that a station which hangs holds up no sample
+    if push:
+        push_latest(now_us)
     return 0
 
 
@@ -520,10 +697,14 @@ def serve_connection(connection: socket.socket) -> None:
 def main(argv: list[str]) -> int:
     if argv == ["collect"]:
         return collect()
+    if argv == ["collect", "--no-push"]:
+        return collect(push=False)
+    if argv == ["push"]:
+        return push_latest(int(time.time() * 1_000_000))
     if argv == ["serve"]:
         serve_connection(socket.socket(fileno=0))
         return 0
-    print("usage: skibidi-metrics collect | serve", file=sys.stderr)
+    print("usage: skibidi-metrics collect [--no-push] | push | serve", file=sys.stderr)
     return 2
 
 

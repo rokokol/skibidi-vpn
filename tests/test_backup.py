@@ -148,10 +148,11 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(values["backup_rest_password"], REST_PASSWORD)
         self.assertEqual(values["backup_repository_password"], REPOSITORY_PASSWORD)
 
-    def test_the_report_state_is_pushed_from_the_master_alone(self):
+    def test_the_master_pushes_no_directory_either_now_that_the_reporter_keeps_no_history(self):
+        # The reporter's snapshots were the one directory; its only file now is
+        # the traffic, which the next run writes again
         self.assertEqual(defaults()["backup_directories"], [])
-        self.assertEqual(defaults(group_names=["master"])["backup_directories"],
-                         ["/var/lib/skibidi-report"])
+        self.assertEqual(defaults(group_names=["master"])["backup_directories"], [])
 
     def test_the_panel_database_and_the_metric_store_are_staged_everywhere(self):
         self.assertEqual(defaults()["backup_databases"],
@@ -454,7 +455,7 @@ class TestChecker(unittest.TestCase):
         body = Environment(trim_blocks=True, undefined=StrictUndefined).from_string(section).render(**values)
         program = (
             "failures=0\n"
-            "fail() { printf 'FAIL %s\\n' \"$*\"; failures=$((failures + 1)); }\n"
+            "fail() { shift; printf 'FAIL %s\\n' \"$*\"; failures=$((failures + 1)); }\n"
             "ok() { printf 'ok   %s\\n' \"$*\"; }\n"
             + body + '\nexit "$failures"\n'
         )

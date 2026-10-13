@@ -1,36 +1,11 @@
 ---
-# The report window and the timers must come from one place: these two feed
-# both OnCalendar and the script's window arithmetic, so the letter cannot
-# drift away from the moment it fires without someone editing this file
-reporter_timezone: Europe/Moscow
-reporter_hour: 9
-reporter_weekday: Mon
-
-# Minutes past the hour: the daily snapshot lands just after the window's
-# edge, the letter fires a little later still, so Monday's snapshot exists
-# before the letter that diffs against it is built
-reporter_snapshot_minute: 2
-reporter_send_minute: 7
-
-# Where the letter goes; the same intake the alerts already use
-reporter_to: "{{ alert_to | default('') }}"
-
 # The panel's own database, read-only. No API and no token: the CLI can only
 # mint a token by rotating the one it owns, which knocks out whoever else held
 # it, and the master already holds the file
 reporter_panel_db: "{{ xui_db | default('/etc/x-ui/x-ui.db') }}"
 
-reporter_state_dir: /var/lib/skibidi-report
-
-# Overridable so a test can point the letter at a capture stub instead of a
-# mail path; production leaves it at the sendmail msmtp provides
-reporter_sendmail: /usr/sbin/sendmail
-
-reporter_weekday_index:
-  Mon: 0
-  Tue: 1
-  Wed: 2
-  Thu: 3
-  Fri: 4
-  Sat: 5
-  Sun: 6
+# How often the panel's traffic is written for the collector to add to its
+# push. The collector pushes every ten minutes and leaves out a file older
+# than its window, so this has to stay well inside it. Where the file is lives
+# with the collector, as metrics_push_textfile
+reporter_traffic_interval: 10min

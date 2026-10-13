@@ -47,13 +47,12 @@ backup_databases:
   - "{{ xui_db | default('/etc/x-ui/x-ui.db') }}"
   - "{{ metrics_db_dir | default('/var/lib/skibidi-metrics') }}/metrics.db"
 
-# The report's snapshots exist on the master alone. They are plain files that
-# the report writes once a day, so they are pushed in place
-backup_report_state: "{{ 'master' in group_names }}"
-backup_directories: "{{ [reporter_state_dir | default('/var/lib/skibidi-report')] if backup_report_state else [] }}"
-# matplotlib's cache, rebuilt on the next letter
-backup_excludes:
-  - "{{ reporter_state_dir | default('/var/lib/skibidi-report') }}/mpl"
+# Plain directories pushed in place, beside the stores above. None now: the
+# only one was the reporter's history, and the reporter keeps none. A restore
+# of the master is the panel's database, which has everything the panel knows
+backup_directories: []
+# Paths under those directories that a restore does not need
+backup_excludes: []
 
 # Scattered so the fleet does not reach one station at the same moment. The
 # checker's silence limit for skibidi-backup.timer assumes a daily push

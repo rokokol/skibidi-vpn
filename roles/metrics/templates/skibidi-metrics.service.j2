@@ -1,10 +1,14 @@
 # {{ ansible_managed }}
 [Unit]
-Description=Sample the OS state the weekly report is built from
+Description=Sample the OS state the dashboard and the daily check are built from
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/skibidi-metrics collect
+# Where the numbers are pushed, written by the role for a node that names a
+# station. The dash makes the file optional: a node without one pushes nothing
+EnvironmentFile=-{{ metrics_push_env_file }}
+Environment=SKIBIDI_LIB={{ metrics_lib_dir }}
 Environment=SKIBIDI_METRICS_DB={{ metrics_db_dir }}/metrics.db
 Environment=SKIBIDI_METRICS_RETENTION_DAYS={{ metrics_retention_days }}
 Environment="SKIBIDI_WATCHED_TIMERS={{ metrics_watched_timers | join(' ') }}"

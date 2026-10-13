@@ -1,7 +1,11 @@
 # {{ ansible_managed }}
 [Unit]
-Description=Mail the journal of %i, which failed
+Description=Tell the station about %i, which failed, and mail its journal if that fails
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/skibidi-alert %i
+# The push of a failed check is the collector's, and reads the same target and
+# the same record as the collector's own timer does
+EnvironmentFile=-{{ metrics_push_env_file }}
+Environment=SKIBIDI_LIB={{ metrics_lib_dir }}

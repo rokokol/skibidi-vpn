@@ -76,7 +76,7 @@ class TestMetricsChecks(unittest.TestCase):
     def run_checks(self, overrides=None, env=None):
         script = (
             "failures=0\n"
-            "fail() { printf 'FAIL %s\\n' \"$*\"; failures=$((failures + 1)); }\n"
+            "fail() { shift; printf 'FAIL %s\\n' \"$*\"; failures=$((failures + 1)); }\n"
             "ok() { printf 'ok   %s\\n' \"$*\"; }\n"
             + section(**(overrides or {}))
             + '\nexit "$failures"\n'
@@ -135,6 +135,22 @@ class TestMetricsChecks(unittest.TestCase):
         self.assert_one_failure("metric store", {"STUB_DB_MODE": "644:root:skibidi-metrics"})
         self.assert_one_failure("metric store", {"STUB_FIND": "/var/lib/skibidi-metrics/metrics.db-wal\\n"})
         self.assert_one_failure("metric store", {"STUB_DIR_MODE": "2750:root:root"})
+
+    def test_an_api_address_outside_the_tunnel_fails(self):
+        # The daily check reads the node's own API over plain HTTP, and a
+        # dashboard may read it too; an address outside the tunnel would put
+        # the node's numbers on the open internet in clear
+        self.assert_one_failure("outside the tunnel", overrides={"metrics_host": "203.0.113.5"})
+
+    def test_an_api_address_inside_the_tunnel_passes_on_every_node_not_only_the_master(self):
+        for groups in ([], ["master"], ["nodes"]):
+            with self.subTest(groups=groups):
+                self.assertEqual(self.run_checks({"group_names": groups}), (0, []))
+
+    def test_an_ipv6_address_inside_the_tunnel_passes(self):
+        failures, _ = self.run_checks({"metrics_host": "fd7a:115c:a1e0::1",
+                                       "metrics_tunnel_ranges": ["fd7a:115c:a1e0::/48"]})
+        self.assertEqual(failures, 0)
 
     def test_the_old_export_account_fails(self):
         self.assert_one_failure("old metrics export account", {"STUB_GETENT_RC": "0"})

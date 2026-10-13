@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Write the panel's traffic for the collector's push to the station
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-report traffic
+# Where the traffic goes. The same file the collector reads, so the file's
+# name is in one place for both
+EnvironmentFile=-{{ metrics_push_env_file }}
+Environment=SKIBIDI_LIB={{ metrics_lib_dir }}

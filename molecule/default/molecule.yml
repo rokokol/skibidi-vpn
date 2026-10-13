@@ -56,11 +56,6 @@ provisioner:
         # tailscaled is installed but never joins a tailnet in the VM, so it is
         # not among the units whose health means anything here
         checker_required_units: [x-ui, nginx, fail2ban]
-        # The letter is built against the VM's own panel and captured by a
-        # stub instead of mailed: what the verifier reads is the exact bytes
-        # a Monday would send
-        reporter_to: report@example.test
-        reporter_sendmail: /usr/local/sbin/capture-sendmail
         metrics_watched_units: [x-ui, nginx, fail2ban]
         # A dummy interface stands in for tailscale0, created by converge
         # before the roles: it has a device unit the way tailscale0 does, so
@@ -76,8 +71,6 @@ provisioner:
         backup_url: "http://100.64.0.2:8000"
         station_interface: station0
         station_dir: /srv/station
-        # The VM runs the reporter the way a master does
-        backup_report_state: true
         # Generated once per run into molecule's directory and read back by
         # the verifier, so no literal sits here. Punctuation is in both on
         # purpose: the script must hand either one over untouched

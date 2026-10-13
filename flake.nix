@@ -3,11 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # The report's theme comes from the themes repo the same way mail-node's
-    # does: locked here, updated by `nix flake update`, copied nowhere. One
-    # input on purpose - the charts' mplstyle and the HTML's stylesheet are
-    # generated from one palette revision inside that repo, so consuming both
-    # from it makes the letter agree with itself by construction
+    # The letters' theme comes from the themes repo the same way mail-node's
+    # does: locked here, updated by `nix flake update`, copied nowhere. The
+    # letter file is generated from one palette revision inside that repo, so
+    # the digest and the alert mail agree with each other by construction
     ddlc-themes = {
       url = "github:rokokol/ddlc-themes";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -74,15 +73,11 @@
             shellcheck
           ];
 
-          # Deploys run from this shell, and the roles read these to carry the
-          # theme onto the nodes — the matplotlib style for the charts and the
-          # letter file the HTML takes its colours, faces and styles from, both
-          # riding the lockfile, never a copy in a tracked file
-          SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
+          # Deploys run from this shell, and the roles read this to carry the
+          # theme onto the nodes — the letter file the HTML takes its colours,
+          # faces and styles from, riding the lockfile, never a copy in a
+          # tracked file
           SKIBIDI_MAIL = "${ddlc-themes.lib.mail}";
-          # The charts' text face, deployed to the master so matplotlib there
-          # letters its axes the way the tables around it are set
-          SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
 
           shellHook = ''
             export SKIBIDI_NODES_DIR="''${SKIBIDI_NODES_DIR:-$PWD/inventory/nodes}"
@@ -98,15 +93,8 @@
             ansible
             ansible-lint
             yamllint
-            # matplotlib because the report tests render real charts; the cid
-            # round trip proves nothing if no chart was ever attached. jinja2
-            # because the config template's promises are themselves under test
-            (python3.withPackages (
-              ps: with ps; [
-                matplotlib
-                jinja2
-              ]
-            ))
+            # jinja2 because the templates' promises are themselves under test
+            (python3.withPackages (ps: with ps; [ jinja2 ]))
             # The backup tests stage real SQLite stores through the rendered
             # script, push them with a real restic to a real rest-server, and
             # hold the script to shellcheck
@@ -115,9 +103,7 @@
             restic
             restic-rest-server
           ];
-          SKIBIDI_MPLSTYLE = "${ddlc-themes.lib.matplotlib.light}";
           SKIBIDI_MAIL = "${ddlc-themes.lib.mail}";
-          SKIBIDI_CHART_FONT = "${pkgs.departure-mono}/share/fonts/otf/DepartureMono-Regular.otf";
         };
       });
 

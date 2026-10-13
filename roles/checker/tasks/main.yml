@@ -9,7 +9,7 @@
 # The intake authorises by source address and holds the list of who may use it,
 # so this node carries no credential - and therefore nothing here is secret.
 # It sits on a public address, so the session is encrypted and the server is
-# verified against the system trust store: the weekly letter names every
+# verified against the system trust store: the daily list names every
 # client and every node, and a source-address allowlist does not stop a
 # reader on the path. STARTTLS rather than implicit TLS is what the intake
 # offers (Postfix "may")
@@ -119,6 +119,32 @@
     path: /etc/skibidi/ddlc-report.css
     state: absent
 
+# Written by the check as root and read by the daily check as root. The
+# directory also holds the count of missed master checks
+- name: Make the directory the check keeps its record in
+  ansible.builtin.file:
+    path: "{{ checker_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the daily check
+  ansible.builtin.copy:
+    src: skibidi-daily.py
+    dest: /usr/local/sbin/skibidi-daily
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Write the daily check's settings
+  ansible.builtin.template:
+    src: skibidi-daily.env.j2
+    dest: "{{ checker_daily_env_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Install the check and the alert
   ansible.builtin.template:
     src: "{{ item.src }}"
@@ -141,6 +167,8 @@
     - skibidi-check.service
     - skibidi-check.timer
     - skibidi-alert@.service
+    - skibidi-daily.service
+    - skibidi-daily.timer
   notify: Reload systemd
 
 - name: Apply the unit changes before enabling the timer
@@ -149,11 +177,14 @@
 # Skipped in check mode: the unit file it enables is written by this same play,
 # and a dry run deliberately does not write it, so systemd is asked about a
 # timer that does not exist yet
-- name: Enable the timer
+- name: Enable the timers
   ansible.builtin.systemd_service:
-    name: skibidi-check.timer
+    name: "{{ item }}"
     enabled: true
     state: started
+  loop:
+    - skibidi-check.timer
+    - skibidi-daily.timer
   when: not ansible_check_mode
 
 # Running it once here means a node is never deployed into a state its own
@@ -170,6 +201,30 @@
 - name: Report what the node says about itself
   ansible.builtin.debug:
     msg: "{{ checker_first_run.stdout_lines }}"
+  when: not ansible_check_mode
+
+# Exit 1 means it listed something still open, which a fresh node may well
+# have (a reboot, some updates) and which is not a failed deploy. Anything
+# else means the daily check itself could not run, and that is. Through
+# systemd-run with the unit's settings and without its OnFailure, so a deploy
+# mails nothing
+- name: Run the daily check once, now
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --wait
+      - --pipe
+      - --property=EnvironmentFile={{ checker_daily_env_file }}
+      - /usr/local/sbin/skibidi-daily
+  register: checker_daily_run
+  changed_when: false
+  failed_when: checker_daily_run.rc not in [0, 1]
+  when: not ansible_check_mode
+
+- name: Report what is still open on the node
+  ansible.builtin.debug:
+    msg: "{{ checker_daily_run.stdout_lines }}"
   when: not ansible_check_mode
 
 - name: Fail the deploy if the node does not pass its own checks

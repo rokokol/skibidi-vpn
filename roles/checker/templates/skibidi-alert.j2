@@ -8,7 +8,23 @@
 set -uo pipefail
 
 unit=${1:-unknown}
-to=$(cat /etc/skibidi/alert-to 2>/dev/null)
+
+# A failed self-check goes to the station first. Its record is written before
+# the check exits, so one push tells the station every open problem within
+# seconds, and the station alerts by its own relay, which does not depend on the
+# mail node. The mail below is the fallback, for a push that failed and for a
+# node that names no station. The push is the collector's own command, the one
+# implementation of the push. Every other failed unit has no problem to push:
+# the daily list, for one, is the mail
+case "$unit" in
+    skibidi-check | skibidi-check.service)
+        if {{ checker_alert_push }}; then
+            exit 0
+        fi
+        ;;
+esac
+
+to=$(cat {{ checker_alert_to_file }} 2>/dev/null)
 [ -n "$to" ] || exit 0
 
 # The journal of *this* run, not of every run of this unit. Without the

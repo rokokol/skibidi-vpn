@@ -110,6 +110,66 @@
         host: "{{ station_address }}"
         port: 8000
         timeout: 30
+
+    # --- the station's Pushgateway ---------------------------------------------
+    #
+    # A stub that refuses what the station refuses: any path but the node's own
+    # group, any login but the node's, a body the exposition parser rejects. It
+    # keeps every request in a log for the verifier to read. The same file the
+    # unit tests start in a thread, so the two cannot disagree about the rules
+
+    - name: Make the Pushgateway's directory
+      ansible.builtin.file:
+        path: "{{ station_dir }}-gateway"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install the Pushgateway stub
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../tests/pushgateway_stub.py"
+        dest: /usr/local/sbin/pushgateway-stub
+        owner: root
+        group: root
+        mode: "0755"
+
+    # The same password the htpasswd above holds, as the station's nginx would
+    # check it. No trailing newline, because the node writes none
+    - name: Give the stub the node's login
+      ansible.builtin.copy:
+        dest: "{{ station_dir }}-gateway/rest-password"
+        content: "{{ backup_secrets[inventory_hostname].rest_password }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Install the stub's unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/station-pushgateway.service
+        content: |
+          [Unit]
+          Description=The Pushgateway a test node pushes to
+
+          [Service]
+          ExecStart=/usr/bin/python3 /usr/local/sbin/pushgateway-stub --listen {{ station_address }}:9091 --user {{ inventory_hostname }} --password-file {{ station_dir }}-gateway/rest-password --log {{ station_dir }}-gateway/pushes.jsonl
+        owner: root
+        group: root
+        mode: "0644"
+      register: converge_gateway_unit
+
+    - name: Start the Pushgateway
+      ansible.builtin.systemd_service:
+        name: station-pushgateway
+        state: "{{ 'restarted' if converge_gateway_unit.changed else 'started' }}"
+        daemon_reload: "{{ converge_gateway_unit.changed }}"
+
+    - name: Wait for the Pushgateway to listen
+      ansible.builtin.wait_for:
+        host: "{{ station_address }}"
+        port: 9091
+        timeout: 30
   roles:
     - common
     - tailscale

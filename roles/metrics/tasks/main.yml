@@ -10,6 +10,53 @@
 - name: Remove the SSH export the API replaced
   ansible.builtin.import_tasks: legacy-ssh-export.yml
 
+# The collector imports the push from here, and the reporter and the daily
+# check import the rules. Root-owned and not writable by others: root runs all
+# three, so a library anyone could write is a way to root
+- name: Make the directory for the shared code
+  ansible.builtin.file:
+    path: "{{ metrics_lib_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the shared code
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ metrics_lib_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - skibidi_push.py
+    - skibidi_problems.py
+
+- name: Make the directory the push target lives in
+  ansible.builtin.file:
+    path: /etc/skibidi
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The deploy says nothing about a node that names no station. The collector
+# says it once in the journal, which is where somebody wondering looks
+- name: Write the target of the push
+  ansible.builtin.template:
+    src: push.env.j2
+    dest: "{{ metrics_push_env_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: backup_url | length > 0
+
+- name: Remove the target of the push from a node that names no station
+  ansible.builtin.file:
+    path: "{{ metrics_push_env_file }}"
+    state: absent
+  when: backup_url | length == 0
+
 # Collection needs root; reading the finished store does not. The API runs as
 # a dynamic user whose only privilege is this group, so a bug in it reaches one
 # file, read-only
@@ -47,10 +94,11 @@
 
 # A node is never deployed into a state where its own sampler cannot run; the
 # first rows land now, in front of someone, rather than failing silently on a
-# timer tonight
+# timer tonight. Without a push: the password arrives with the backup role,
+# which runs after this one, and the timer pushes within ten minutes
 - name: Take the first sample, now
   ansible.builtin.command:
-    argv: [/usr/local/sbin/skibidi-metrics, collect]
+    argv: [/usr/local/sbin/skibidi-metrics, collect, --no-push]
   changed_when: false
   when: not ansible_check_mode
 
@@ -84,9 +132,10 @@
   when: not ansible_check_mode
 
 # Asked the way the master will ask: through the socket, the sandbox and the
-# dynamic user, at the address the letter reads. A sandbox that cannot reach
-# the store, or a socket bound somewhere else, fails here instead of on Monday
-- name: Prove the API answers at the address the letter reads
+# dynamic user, at the address the daily check reads. A sandbox that cannot
+# reach the store, or a socket bound somewhere else, fails here instead of at
+# nine tomorrow
+- name: Prove the API answers at the address the daily check reads
   ansible.builtin.uri:
     url: >-
       http://{{ '[' ~ metrics_host ~ ']' if ':' in metrics_host else metrics_host }}:{{ metrics_api_port }}/v1/samples

@@ -12,10 +12,20 @@
 set -uo pipefail
 
 failures=0
+failed=""
 
+# fail CAUSE MESSAGE. The cause names what is wrong, the same each run and with
+# nothing in it that varies: no count, no percentage, no address. The station
+# keeps one alert per cause, and a cause that changed its name between runs
+# would be a problem solved and a new one raised. A unit or a port belongs in
+# it, because two units failing are two causes
 fail() {
+    local cause=$1
+    shift
     printf 'FAIL %s\n' "$*"
     failures=$((failures + 1))
+    # One line per failure for the record below, whatever the message holds
+    failed="${failed}${cause}"$'\t'"${*//$'\n'/ }"$'\n'
 }
 
 ok() {
@@ -28,10 +38,10 @@ for unit in {{ checker_required_units | join(' ') }}; do
     if systemctl is-active --quiet "$unit"; then
         ok "$unit is running"
     else
-        fail "$unit is not running"
+        fail "unit.$unit.down" "$unit is not running"
     fi
     if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
-        fail "$unit is not enabled and will not survive a reboot"
+        fail "unit.$unit.disabled" "$unit is not enabled and will not survive a reboot"
     fi
 done
 
@@ -45,7 +55,7 @@ declared=$(grep -lE '^\s*net\.(core\.default_qdisc|ipv4\.tcp_congestion_control)
 if [ "$declared" -eq 1 ]; then
     ok "congestion control is declared in exactly one file"
 else
-    fail "$declared files declare congestion control; the last one read wins"
+    fail "sysctl.congestion-declared" "$declared files declare congestion control; the last one read wins"
 fi
 
 for pair in "net.ipv4.tcp_congestion_control={{ common_congestion_control }}" \
@@ -57,7 +67,7 @@ for pair in "net.ipv4.tcp_congestion_control={{ common_congestion_control }}" \
     if [ "$have" = "$want" ]; then
         ok "$key is $have"
     else
-        fail "$key is $have, expected $want"
+        fail "sysctl.$key" "$key is $have, expected $want"
     fi
 done
 
@@ -68,7 +78,7 @@ if [ -n "$iface" ]; then
     if tc qdisc show dev "$iface" 2>/dev/null | grep -q '{{ common_qdisc }}'; then
         ok "$iface uses {{ common_qdisc }}"
     else
-        fail "$iface does not use {{ common_qdisc }}"
+        fail "qdisc.default-interface" "$iface does not use {{ common_qdisc }}"
     fi
 fi
 
@@ -83,7 +93,7 @@ if [ "$max" -gt 0 ]; then
     if [ "$used" -lt 80 ]; then
         ok "conntrack ${used}% used ($count of $max)"
     else
-        fail "conntrack ${used}% used ($count of $max); new connections will be dropped"
+        fail "conntrack.full" "conntrack ${used}% used ($count of $max); new connections will be dropped"
     fi
 fi
 
@@ -92,7 +102,7 @@ fi
 if ufw status 2>/dev/null | grep -q '^Status: active'; then
     ok "ufw is active"
 else
-    fail "ufw is not active"
+    fail "ufw.inactive" "ufw is not active"
 fi
 
 # The outward-facing surface, compared against what this node declares. A rule
@@ -120,14 +130,14 @@ done
 if [ -z "$unexpected" ]; then
     ok "the firewall opens only what this node declares"
 else
-    fail "the firewall also allows$unexpected, which this node does not declare"
+    fail "firewall.unexpected-open" "the firewall also allows$unexpected, which this node does not declare"
 fi
 
 for port in $declared_tcp $declared_udp; do
     if printf '%s\n' "$open_now" | grep -qE "^${port}(/|$)"; then
         :
     else
-        fail "port $port is declared open but the firewall does not allow it"
+        fail "firewall.closed-port.$port" "port $port is declared open but the firewall does not allow it"
     fi
 done
 
@@ -173,7 +183,7 @@ fi
 if iptables -S ufw-before-output 2>/dev/null | grep -q -- '--sport {{ firewall_tailscale_port }} -j DROP'; then
     ok "the tailscale direct path is dropped"
 else
-    fail "the tailscale drop rule is not loaded; this address emits WireGuard"
+    fail "tailscale.drop-rule-missing" "the tailscale drop rule is not loaded; this address emits WireGuard"
 fi
 
 # The port is written in two places and a drift makes the rule match nothing
@@ -182,7 +192,7 @@ daemon_port=$(. /etc/default/tailscaled 2>/dev/null; echo "${PORT:-}")
 if [ -z "$daemon_port" ] || [ "$daemon_port" = "{{ firewall_tailscale_port }}" ]; then
     ok "tailscaled uses the port the rule drops"
 else
-    fail "tailscaled uses port $daemon_port but the rule drops {{ firewall_tailscale_port }}"
+    fail "tailscale.port-drift" "tailscaled uses port $daemon_port but the rule drops {{ firewall_tailscale_port }}"
 fi
 {% endif %}
 
@@ -192,7 +202,7 @@ for jail in {{ checker_required_jails | join(' ') }}; do
     if fail2ban-client status "$jail" >/dev/null 2>&1; then
         ok "fail2ban jail $jail answers"
     else
-        fail "fail2ban jail $jail does not answer"
+        fail "fail2ban.jail.$jail" "fail2ban jail $jail does not answer"
     fi
 done
 
@@ -203,7 +213,7 @@ done
 opened=$(fail2ban-client get 3x-ipl logpath 2>/dev/null)
 case "$opened" in
     *"{{ fail2ban_ipl_logpath }}"*) ok "the 3x-ipl jail reads {{ fail2ban_ipl_logpath }}" ;;
-    *) fail "the 3x-ipl jail does not read {{ fail2ban_ipl_logpath }}; it watches the journal and bans nobody" ;;
+    *) fail "fail2ban.3x-ipl.logpath" "the 3x-ipl jail does not read {{ fail2ban_ipl_logpath }}; it watches the journal and bans nobody" ;;
 esac
 
 # The set a ban is written into has to exist in the kernel, or the jail is
@@ -211,7 +221,7 @@ esac
 if nft list set inet f2b-table addr-set-3x-ipl >/dev/null 2>&1; then
     ok "the 3x-ipl ban set exists in nftables"
 else
-    fail "nftables has no addr-set-3x-ipl; the panel's bans have nowhere to land"
+    fail "fail2ban.3x-ipl.nft-set" "nftables has no addr-set-3x-ipl; the panel's bans have nowhere to land"
 fi
 
 # A filter that no longer matches its log is the quiet failure here: the jail
@@ -225,7 +235,7 @@ if [ -s "$log" ]; then
     if [ "${matched:-0}" -gt 0 ]; then
         ok "the 3x-ipl filter still matches the panel's log"
     else
-        fail "the 3x-ipl filter matches nothing in $log; the panel changed its format and nobody is being banned"
+        fail "fail2ban.3x-ipl.filter" "the 3x-ipl filter matches nothing in $log; the panel changed its format and nobody is being banned"
     fi
 else
     ok "the panel has logged no address-limit events"
@@ -239,13 +249,13 @@ fi
 
 listeners=$(ss -ltnH "sport = :{{ xui_panel_port }}" 2>/dev/null | awk '{print $4}')
 if [ -z "$listeners" ]; then
-    fail "nothing listens on the panel port {{ xui_panel_port }}"
+    fail "panel.not-listening" "nothing listens on the panel port {{ xui_panel_port }}"
 else
     stray=$(printf '%s\n' "$listeners" | grep -v '{{ xui_listen_ip }}' || true)
     if [ -z "$stray" ]; then
         ok "the panel answers only on {{ xui_listen_ip }}"
     else
-        fail "the panel also answers on $(echo "$stray" | tr '\n' ' ')"
+        fail "panel.public-listener" "the panel also answers on $(echo "$stray" | tr '\n' ' ')"
     fi
 fi
 
@@ -259,7 +269,7 @@ if [ -d "$(dirname {{ xui_db }})" ]; then
     if [ "$loose" -eq 0 ]; then
         ok "the panel database and its copies are readable by root alone"
     else
-        fail "$loose file(s) under $(dirname {{ xui_db }}) are readable beyond root; every client secret is in them"
+        fail "panel.db-modes" "$loose file(s) under $(dirname {{ xui_db }}) are readable beyond root; every client secret is in them"
     fi
 fi
 
@@ -272,7 +282,7 @@ if [ -r {{ xui_db }} ]; then
         if ss -lntuH "sport = :$port" 2>/dev/null | grep -q .; then
             ok "inbound port $port is served"
         else
-            fail "inbound port $port is enabled but nothing listens on it"
+            fail "inbound.port.$port" "inbound port $port is enabled but nothing listens on it"
         fi
     # Only this machine's own inbounds. A master's database also holds the
     # inbounds of every node it drives, and those are served there, not here -
@@ -296,7 +306,7 @@ if systemctl list-unit-files '{{ timer.name }}' 2>/dev/null | grep -q '{{ timer.
         last_epoch=$(date -d "$last" +%s 2>/dev/null || echo 0)
         age_hours=$(( ($(date +%s) - last_epoch) / 3600 ))
         if [ "$last_epoch" -gt 0 ] && [ "$age_hours" -gt {{ timer.max_silence_hours }} ]; then
-            fail "{{ timer.name }} last fired ${age_hours}h ago, over its {{ timer.max_silence_hours }}h limit"
+            fail "timer.{{ timer.name }}.silent" "{{ timer.name }} last fired ${age_hours}h ago, over its {{ timer.max_silence_hours }}h limit"
         else
             ok "{{ timer.name }} fired ${age_hours}h ago"
         fi
@@ -310,7 +320,7 @@ fi
 # it. So each node watches its own master and mails directly, past it.
 
 {% if checker_master_url %}
-state=/var/lib/skibidi-check/master-failures
+state={{ checker_state_dir }}/master-failures
 mkdir -p "$(dirname "$state")"
 if curl -sk --max-time 10 -o /dev/null "{{ checker_master_url }}"; then
     ok "the master answers"
@@ -323,7 +333,7 @@ else
     # across runs rather than retrying within one keeps a slow master from
     # holding this script open
     if [ "$seen" -ge {{ checker_master_failures_before_alert }} ]; then
-        fail "the master has not answered for $seen consecutive checks"
+        fail "master.unreachable" "the master has not answered for $seen consecutive checks"
     else
         ok "the master missed a check ($seen of {{ checker_master_failures_before_alert }})"
     fi
@@ -353,7 +363,7 @@ PYEOF
     elif [ "$intake_inside" = "yes" ]; then
         ok "the mail path stays on the tunnel"
     else
-        fail "the mail path is cleartext to {{ checker_smtp }}, which is outside the tunnel"
+        fail "mail.cleartext" "the mail path is cleartext to {{ checker_smtp }}, which is outside the tunnel"
     fi
 fi
 {% endif %}
@@ -371,13 +381,13 @@ if systemctl is-enabled --quiet skibidi-backup.timer 2>/dev/null \
     && systemctl is-active --quiet skibidi-backup.timer; then
     ok "the backup timer is enabled and waiting"
 else
-    fail "the backup timer is not enabled and running; nothing pushes this node's backup"
+    fail "backup.timer" "the backup timer is not enabled and running; nothing pushes this node's backup"
 fi
 
 if backup_target=$({{ backup_script }} target 2>&1); then
     ok "$backup_target"
 else
-    fail "${backup_target:-the backup station could not be checked}"
+    fail "backup.station" "${backup_target:-the backup station could not be checked}"
 fi
 
 # The staged copy holds every client credential, and the two password files
@@ -387,10 +397,10 @@ if [ -s {{ backup_config_dir }}/rest-password ] && [ -s {{ backup_config_dir }}/
     if [ "$backup_open" -eq 0 ]; then
         ok "the backup secrets and the staged copies are readable by root alone"
     else
-        fail "$backup_open path(s) under {{ backup_config_dir }} or {{ backup_state_dir }} are open beyond root"
+        fail "backup.modes" "$backup_open path(s) under {{ backup_config_dir }} or {{ backup_state_dir }} are open beyond root"
     fi
 else
-    fail "the backup secrets are missing from {{ backup_config_dir }}"
+    fail "backup.secrets-missing" "the backup secrets are missing from {{ backup_config_dir }}"
 fi
 {% endif %}
 
@@ -399,25 +409,25 @@ fi
 # The API has no authentication, so who can reach it is the whole of its
 # security: the socket bound to the tunnel interface, no firewall rule for its
 # port anywhere else, and a store nobody but root and the reader group can
-# open. The pull must also ride the tunnel by declaration, not by coincidence:
-# the socket pins where a request may come from, and the master's list pins
-# where the letter may go, because the moment a configured address is public
-# the fleet's metrics cross the open internet in clear.
+# open. The reads must also ride the tunnel by declaration, not by coincidence:
+# the socket pins where a request may come from, and the declared address pins
+# where the daily check and a dashboard may go, because the moment that
+# address is public the node's metrics cross the open internet in clear.
 
 if systemctl is-active --quiet skibidi-metrics-api.socket; then
     ok "the metrics API socket is listening"
 else
-    fail "the metrics API socket is not active; the letter and the dashboard cannot read this node"
+    fail "metrics.socket-inactive" "the metrics API socket is not active; the daily check and the dashboard cannot read this node"
 fi
 
 # An empty answer must not pass: "nothing listens off the tunnel" is also what
 # a socket that listens nowhere looks like
 api_listeners=$(ss -ltnH "sport = :{{ metrics_api_port }}" 2>/dev/null | awk '{print $4}')
 if [ -z "$api_listeners" ]; then
-    fail "nothing listens on the metrics API port {{ metrics_api_port }}"
+    fail "metrics.no-listener" "nothing listens on the metrics API port {{ metrics_api_port }}"
 {% if metrics_api_interface %}
 elif api_stray=$(printf '%s\n' "$api_listeners" | grep -v '%{{ metrics_api_interface }}:{{ metrics_api_port }}$'); then
-    fail "the metrics API also listens on $(echo "$api_stray" | tr '\n' ' '), not only on {{ metrics_api_interface }}"
+    fail "metrics.public-listener" "the metrics API also listens on $(echo "$api_stray" | tr '\n' ' '), not only on {{ metrics_api_interface }}"
 else
     ok "the metrics API listens on {{ metrics_api_interface }} alone"
 {% else %}
@@ -433,7 +443,7 @@ api_rules=$(ufw status 2>/dev/null \
 if [ -z "$api_rules" ]; then
     ok "no firewall rule admits the metrics API port off the tunnel"
 else
-    fail "the firewall admits port {{ metrics_api_port }} off the tunnel: $(echo "$api_rules" | tr -s ' ' | tr '\n' ';')"
+    fail "metrics.firewall-open" "the firewall admits port {{ metrics_api_port }} off the tunnel: $(echo "$api_rules" | tr -s ' ' | tr '\n' ';')"
 fi
 
 {% if metrics_host is defined %}
@@ -441,7 +451,7 @@ api_url='http://{{ "[" ~ metrics_host ~ "]" if ":" in metrics_host else metrics_
 api_health=$(curl -fsS --max-time 10 "$api_url" 2>&1)
 case "$api_health" in
     *'"status":"ok"'*) ok "the metrics API answers on {{ metrics_host }}" ;;
-    *) fail "the metrics API does not answer healthy on {{ metrics_host }}: ${api_health:-no answer}" ;;
+    *) fail "metrics.unhealthy" "the metrics API does not answer healthy on {{ metrics_host }}: ${api_health:-no answer}" ;;
 esac
 {% endif %}
 
@@ -453,42 +463,38 @@ store_loose=$(find "$store_dir" -perm /o+rwx 2>/dev/null | wc -l)
 if [ "$store_modes" = "2750:root:{{ metrics_reader_group }} 640:root:{{ metrics_reader_group }}" ] && [ "$store_loose" -eq 0 ]; then
     ok "the metric store is readable by root and {{ metrics_reader_group }} alone"
 else
-    fail "the metric store is $store_modes with $store_loose file(s) open to others, expected 2750 and 640 root:{{ metrics_reader_group }}"
+    fail "metrics.store-modes" "the metric store is $store_modes with $store_loose file(s) open to others, expected 2750 and 640 root:{{ metrics_reader_group }}"
 fi
 
 # The SSH export the API replaced. A key it left behind still opens a door
 # nobody watches any more
 if getent passwd skibidi-metrics >/dev/null; then
-    fail "the old metrics export account skibidi-metrics still exists"
+    fail "metrics.old-account" "the old metrics export account skibidi-metrics still exists"
 elif [ -e /root/.ssh/skibidi-report ]; then
-    fail "the old metrics pull key /root/.ssh/skibidi-report is still here"
+    fail "metrics.old-key" "the old metrics pull key /root/.ssh/skibidi-report is still here"
 else
     ok "nothing of the old SSH metrics export is left"
 fi
 
-{% if 'master' in group_names %}
-if [ -r /etc/skibidi/report.toml ]; then
-    strays=$(python3 - <<'PYEOF'
+{% if metrics_host is defined %}
+# The daily check reads this node's own API at the address the registry
+# declares, over plain HTTP, and a dashboard may read it the same way. Either
+# crosses the open internet in clear the moment the address is public
+api_inside=$(python3 - <<'PYEOF'
 import ipaddress
-import tomllib
 
 ranges = [ipaddress.ip_network(r) for r in "{{ metrics_tunnel_ranges | join(' ') }}".split()]
-with open("/etc/skibidi/report.toml", "rb") as handle:
-    nodes = tomllib.load(handle).get("nodes", [])
-for node in nodes:
-    try:
-        inside = any(ipaddress.ip_address(node["host"]) in r for r in ranges)
-    except ValueError:  # a hostname resolves wherever DNS says today
-        inside = False
-    if not inside:
-        print(node["name"])
+try:
+    inside = any(ipaddress.ip_address("{{ metrics_host }}") in r for r in ranges)
+except ValueError:  # a hostname resolves wherever DNS says today
+    inside = False
+print("yes" if inside else "no")
 PYEOF
 )
-    if [ -z "$strays" ]; then
-        ok "the metrics pull stays on the tunnel"
-    else
-        fail "the metrics pull would leave the tunnel for: $(printf '%s' "$strays" | tr '\n' ' ')"
-    fi
+if [ "$api_inside" = "yes" ]; then
+    ok "the metrics API address {{ metrics_host }} is inside the tunnel"
+else
+    fail "metrics.address-public" "the metrics API address {{ metrics_host }} is outside the tunnel; its numbers would cross the internet in clear"
 fi
 {% endif %}
 
@@ -503,13 +509,13 @@ fi
 if systemctl is-active --quiet warp-svc; then
     ok "warp-svc is running"
 else
-    fail "warp-svc is not running"
+    fail "warp.down" "warp-svc is not running"
 fi
 
 verdict=$(WARP_WD_DRY_RUN=1 /usr/local/sbin/warp-watchdog 2>/dev/null)
 case "$verdict" in
     *verdict=healthy*) ok "WARP carries traffic ($verdict)" ;;
-    *) fail "WARP is up but not carrying traffic: $verdict" ;;
+    *) fail "warp.no-traffic" "WARP is up but not carrying traffic: $verdict" ;;
 esac
 
 restart_log={{ warp_state_dir | default('/var/lib/warp-watchdog') }}/restarts
@@ -519,7 +525,7 @@ if [ -r "$restart_log" ]; then
     if [ "$recent" -lt {{ warp_restarts_before_alert | default(3) }} ]; then
         ok "WARP restarted ${recent} time(s) in the last day"
     else
-        fail "WARP was restarted ${recent} times in a day; the watchdog is holding up something that keeps failing"
+        fail "warp.restarting" "WARP was restarted ${recent} times in a day; the watchdog is holding up something that keeps failing"
     fi
 fi
 {% endif %}
@@ -532,10 +538,10 @@ if [ -r "$cert" ]; then
     if openssl x509 -checkend $(( {{ certs_min_days_left }} * 86400 )) -noout -in "$cert" >/dev/null 2>&1; then
         ok "the certificate has more than {{ certs_min_days_left }} days left"
     else
-        fail "the certificate expires within {{ certs_min_days_left }} days"
+        fail "cert.expiring" "the certificate expires within {{ certs_min_days_left }} days"
     fi
 else
-    fail "no certificate at $cert, which is where the panel reads it"
+    fail "cert.missing" "no certificate at $cert, which is where the panel reads it"
 fi
 {% endif %}
 
@@ -545,9 +551,20 @@ if [ -x /usr/local/x-ui/bin/xray-linux-amd64 ] && [ -r /usr/local/x-ui/bin/confi
     if /usr/local/x-ui/bin/xray-linux-amd64 run -test -config /usr/local/x-ui/bin/config.json >/dev/null 2>&1; then
         ok "xray accepts its generated configuration"
     else
-        fail "xray rejects its generated configuration; it is running on the last good one"
+        fail "xray.config-rejected" "xray rejects its generated configuration; it is running on the last good one"
     fi
 fi
+
+# --- the record -------------------------------------------------------------
+#
+# The daily check lists what is still open, and reads it here. Running every
+# check a second time would not do: some keep a count between runs, and a
+# second run would count twice. An empty file means this run found nothing; a
+# missing file means no run finished, which the daily check reports
+
+record={{ checker_result_file }}
+mkdir -p "$(dirname "$record")"
+printf '%s' "$failed" > "$record.new" && mv "$record.new" "$record"
 
 # The summary goes last on purpose: the alert mail takes the final line as its
 # subject, so it has to say how bad things are rather than what was checked last

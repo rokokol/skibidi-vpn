@@ -18,7 +18,7 @@
     - nginx
     - metrics
     - role: reporter
-      when: "'master' in group_names and reporter_to | length > 0"
+      when: "'master' in group_names"
     # After every role whose store it copies, and before the checker, which
     # watches its timer. Not gated here: a node with no station runs it to
     # remove what an earlier deploy installed

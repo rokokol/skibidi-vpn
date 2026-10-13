@@ -1,12 +1,31 @@
 ---
 # Sampling cadence. Ten minutes keeps a week at roughly a thousand rows per
-# metric, which SQLite reads back in milliseconds and the report aggregates
+# metric, which SQLite reads back in milliseconds and the API aggregates
 # without any precomputed buckets
 metrics_boot_delay: 5min
 metrics_interval: 10min
 metrics_retention_days: 90
 
 metrics_db_dir: /var/lib/skibidi-metrics
+
+# The code the collector, the reporter and the daily check share: the push and
+# the rules that decide what is a problem. docs/metrics-api.md, "The push"
+metrics_lib_dir: /usr/local/lib/skibidi
+
+# The Pushgateway's port on the backup station. DEVIATIONS.md, "The push to the
+# station borrows the backup's account, host and rule", says why nothing else
+# is set here
+metrics_push_port: 9091
+
+# The file the master's reporter writes its traffic to and the collector adds
+# to its own push. The collector is the one writer of this host's push group,
+# so a series that went away goes away from the station: PUT replaces the
+# group, and a second writer would be wiped by it or leave stale series behind
+metrics_push_textfile: /var/lib/skibidi-report/traffic.prom
+
+# Where the push target is written for the units that push. It holds no
+# secret: the password stays in the backup role's root-only file
+metrics_push_env_file: /etc/skibidi/push.env
 
 # Collection stays root, because some probes need it. Reading the finished
 # store is a file permission, not a privilege: the API runs as a dynamic user
@@ -33,22 +52,22 @@ metrics_api_max_connections: 8
 
 # The tunnel, stated as ranges. Used for the same reason everywhere: the API's
 # socket admits sources inside them alone, and the checker requires the
-# letter's destinations to be inside them, because a public metrics path would
-# cross the internet unencrypted. A fleet on a different tunnel has different
+# node's declared API address to be inside them, because a public metrics path
+# would cross the internet unencrypted. A fleet on a different tunnel has different
 # ranges — override, never edit
 metrics_tunnel_ranges:
   - 100.64.0.0/10
   - fd7a:115c:a1e0::/48
 
-# Timers whose last-fired time the report shows; a quiet one is a mechanism
-# that stopped without saying so, and the checker alerts on it long before
-# Monday — the report only makes the pattern visible over the week
+# Timers whose last-fired time is sampled; a quiet one is a mechanism that
+# stopped without saying so, and the checker alerts on it within hours — the
+# dashboard only makes the pattern visible over the week
 metrics_watched_timers:
   - skibidi-check.timer
   - xray-geodata-update.timer
   - skibidi-metrics.timer
 
-# Units whose restart counters the report turns into weekly deltas. A service
+# Units whose restart counters are sampled and pushed. A service
 # that restarted forty times without ever being down at check time is invisible
 # to the checker and exactly what this row exists to catch
 metrics_watched_units: [x-ui, nginx, fail2ban, tailscaled]

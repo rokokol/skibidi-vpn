@@ -1,289 +1,101 @@
-"""The letter, proven on synthetic data — no panel, no fleet, no VM.
+"""The master's reporter, proven on synthetic data: no panel, no fleet, no VM.
 
-Two assertions are lifted from the mail host's report before anything else,
-because both have failed there in the past: the cid round trip (every cid:
-referenced by the HTML has a matching attachment and vice versa) and the
-empty week (no data must still produce a letter, with an Overview and no
-dangling references).
+It does two things. It writes the panel's traffic as a file the collector adds
+to its own push, and it lists the open items only the panel knows. It mails
+nothing and keeps no history: the weekly letter is gone, and the numbers are
+on the station's dashboard.
 """
 
 from __future__ import annotations
 
-import datetime as dt
-import html
+import contextlib
 import importlib.util
+import io
 import os
-import re
+import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-# Before any chart renders: the deployed unit points this at the state dir,
-# and a test run must not try to write /var/lib
-os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="skibidi-mpl-")
-# A themed dev machine must not leak its own /etc/skibidi files into the tests
-os.environ["SKIBIDI_MAIL_FILE"] = "/nonexistent/ddlc-mail.json"
+ROOT = Path(__file__).resolve().parent.parent
+LIB = ROOT / "roles" / "metrics" / "files"
+os.environ["SKIBIDI_LIB"] = str(LIB)
+sys.path.insert(0, str(LIB))
 
-SCRIPT = (
-    Path(__file__).resolve().parent.parent
-    / "roles" / "reporter" / "files" / "skibidi-report.py"
-)
+from pushgateway_stub import parse_exposition  # noqa: E402
+
+SCRIPT = ROOT / "roles" / "reporter" / "files" / "skibidi-report.py"
 specification = importlib.util.spec_from_file_location("skibidi_report", SCRIPT)
 report = importlib.util.module_from_spec(specification)
 sys.modules["skibidi_report"] = report
 specification.loader.exec_module(report)
 
-ZONE = ZoneInfo("Europe/Moscow")
+UUID = "11111111-2222-3333-4444-555555555555"
 
 
-def empty_data():
-    start = dt.datetime(2026, 8, 24, 9, tzinfo=ZONE)
-    end = dt.datetime(2026, 8, 31, 9, tzinfo=ZONE)
-    return {
-        "start": start,
-        "end": end,
-        "timezone": "Europe/Moscow",
-        "days": [start.date() + dt.timedelta(days=n) for n in range(7)],
-    }
-
-
-def busy_data():
-    data = empty_data()
-    data["inbound_series"] = [
-        (data["start"].date() + dt.timedelta(days=n), {"SE-exit": (n + 1) * 2**30})
-        for n in range(7)
-    ]
-    data["client_deltas"] = [("Art****", 5 * 2**30), ("Mo*", 2**30)]
-    data["bans_by_day"] = {data["start"].date(): 4}
-    data["drops_by_day"] = {data["start"].date(): 120}
-    data["exports"] = {
-        "node-a": {
-            "collected_through_us": 10**18,
-            "samples": [[10**15, "load1", "", 0.5], [2 * 10**15, "load1", "", 1.5]],
-        }
-    }
-    data["health"] = report.health_rows(data["exports"])
-    data["alerts"] = ["node node-b did not answer the metrics pull"]
-    data["panel"] = {
-        "nodes": [{"name": "node-b", "online": True, "heartbeat": 0,
-                   "latency_ms": 42, "cpu": 1, "mem": 20,
-                   "panel_version": "3.7.0", "xray_version": "25.1.1"}],
-        "clients": [{"label": "<script>alert(1)</script>", "inbound": "SE-exit",
-                     "enable": True, "silent_days": 45.0,
-                     "cap_share": None, "expires_days": None}],
-        "versions": {"master": {"panel": "3.7.0", "xray": "25.1.1"}},
-    }
-    data["changes"] = ["inbound added: Тест-инбаунд"]
-    return data
-
-
-def cids_referenced(html_body: str) -> set[str]:
-    return set(re.findall(r'src="cid:([^"]+)"', html_body))
-
-
-def parts_of(message):
-    payload = message.get_payload()
-    html_part = payload[-1]
-    if html_part.get_content_type() == "multipart/related":
-        related = html_part.get_payload()
-        return related[0], related[1:]
-    return html_part, []
-
-
-class TestCidRoundTrip(unittest.TestCase):
-    def test_every_cid_has_an_attachment_and_vice_versa(self):
-        message = report.build_message(busy_data(), "s@x", "r@x")
-        html_part, attachments = parts_of(message)
-        body = html_part.get_content()
-        referenced = cids_referenced(body)
-        attached = {part["Content-ID"].strip("<>") for part in attachments}
-        self.assertEqual(
-            referenced,
-            attached,
-            "a cid: reference without its image renders as a broken icon; "
-            "an attachment nothing references is dead weight",
-        )
-
-
-class TestEmptyWeek(unittest.TestCase):
-    def test_no_data_still_builds_a_letter_with_an_overview(self):
-        message = report.build_message(empty_data(), "s@x", "r@x")
-        html_part, attachments = parts_of(message)
-        body = html_part.get_content()
-        self.assertIn("Overview", body)
-        self.assertEqual(cids_referenced(body), set(), "no charts may be referenced")
-        self.assertEqual(attachments, [], "no charts may be attached")
-        self.assertIn("Weekly VPN report", message["Subject"])
-        self.assertFalse(message["Subject"].startswith("[!]"))
-
-    def test_text_alternative_exists_first(self):
-        message = report.build_message(empty_data(), "s@x", "r@x")
-        first = message.get_payload()[0]
-        self.assertEqual(first.get_content_type(), "text/plain")
-
-
-class TestHtmlDiscipline(unittest.TestCase):
-    def test_no_pre_no_style_block(self):
-        # Monospace blocks reflow badly on phones, and a <style> block is
-        # stripped by enough clients that anything in it silently vanishes
-        body = parts_of(report.build_message(busy_data(), "s@x", "r@x"))[0].get_content()
-        self.assertNotIn("<pre", body)
-        self.assertNotIn("<style", body)
-
-    def test_labels_are_escaped(self):
-        body = parts_of(report.build_message(busy_data(), "s@x", "r@x"))[0].get_content()
-        self.assertNotIn("<script>alert(1)</script>", body)
-        self.assertIn(html.escape("<script>alert(1)</script>"), body)
-
-    def test_cyrillic_survives_the_8bit_path(self):
-        message = report.build_message(busy_data(), "s@x", "r@x")
-        self.assertIn("Тест-инбаунд".encode(), message.as_bytes())
-
-
-class TestAlerts(unittest.TestCase):
-    def test_alerts_prefix_the_subject_and_render(self):
-        message = report.build_message(busy_data(), "s@x", "r@x")
-        self.assertTrue(message["Subject"].startswith("[!] "))
-        self.assertIn("Needs attention", parts_of(message)[0].get_content())
-
-    def test_an_unreachable_node_is_said_not_smoothed_over(self):
-        data = empty_data()
-        data["unreachable"] = [("node-b", "no answer")]
-        alerts = report.collect_alerts(data)
-        self.assertTrue(any("node-b" in alert for alert in alerts))
+def make_panel_db(extra_inbounds: bool = False) -> Path:
+    path = Path(tempfile.mkdtemp(prefix="skibidi-panel-")) / "x-ui.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(f"""
+            CREATE TABLE inbounds (id INTEGER PRIMARY KEY, up INTEGER, down INTEGER,
+                remark TEXT, enable INTEGER, port INTEGER, protocol TEXT,
+                settings TEXT, node_id INTEGER);
+            CREATE TABLE client_traffics (id INTEGER PRIMARY KEY, inbound_id INTEGER,
+                email TEXT, up INTEGER, down INTEGER, total INTEGER,
+                expiry_time INTEGER, enable INTEGER, last_online INTEGER);
+            CREATE TABLE nodes (id INTEGER PRIMARY KEY, name TEXT, remark TEXT,
+                status TEXT, last_heartbeat INTEGER, latency_ms INTEGER,
+                cpu_pct REAL, mem_pct REAL, panel_version TEXT, xray_version TEXT);
+            INSERT INTO inbounds VALUES (1, 10, 20, 'SE-exit', 1, 443, 'vless',
+                '{{"clients": [{{"id": "{UUID}", "email": "Grandmother", "subId": "abcdef"}}]}}', NULL);
+            INSERT INTO client_traffics VALUES (1, 1, 'Grandmother', 5, 7, 100, 0, 1, 1735680000000);
+            INSERT INTO nodes VALUES (1, 'node-b', '', 'online', 1700000000, 42, 1.0, 20.0, '3.7.0', '25.1.1');
+        """)
+        if extra_inbounds:
+            db.executescript("""
+                INSERT INTO inbounds VALUES (2, 1, 2, 'SE-exit', 1, 8443, 'trojan',
+                    '{"clients": []}', 3);
+                INSERT INTO client_traffics VALUES (2, 2, 'Mo', 100, 200, 0, 0, 1, 0);
+            """)
+    return path
 
 
 class TestLabels(unittest.TestCase):
     def test_the_operator_reads_their_own_labels_in_clear(self):
-        # The letter goes to the fleet's owner; masking their family's names
+        # The dashboard is the fleet owner's; masking their family's names
         # from them protects nobody. The credential half is what stays out
         self.assertEqual(report.client_label("Grandmother"), "Grandmother")
         self.assertEqual(report.client_label(None), "")
 
 
-class TestCounters(unittest.TestCase):
-    def test_a_reset_counter_becomes_the_new_absolute_not_a_negative_week(self):
-        self.assertEqual(report.clamped_delta(5, 100), 5)
-        self.assertEqual(report.clamped_delta(100, 5), 95)
-
-    def test_week_delta_survives_a_mid_week_reset(self):
-        export = {"samples": [
-            [1, "f2b_banned_total", "sshd", 10],
-            [2, "f2b_banned_total", "sshd", 14],
-            [3, "f2b_banned_total", "sshd", 2],
-            [4, "f2b_banned_total", "sshd", 3],
-        ]}
-        self.assertEqual(report.counter_week_delta(export, "f2b_banned_total", "sshd"), 7)
-
-
-class TestWindow(unittest.TestCase):
-    def test_the_window_ends_on_the_configured_weekday_and_hour(self):
-        now = dt.datetime(2026, 9, 2, 15, tzinfo=ZONE)  # a Wednesday
-        start_us, end_us = report.report_window(now, "Europe/Moscow", 9, 0)
-        end = dt.datetime.fromtimestamp(end_us / 1_000_000, dt.UTC).astimezone(ZONE)
-        self.assertEqual((end.weekday(), end.hour), (0, 9))
-        self.assertEqual(end_us - start_us, 7 * 86400 * 1_000_000)
-
-    def test_monday_before_the_hour_reports_the_previous_week(self):
-        now = dt.datetime(2026, 8, 31, 8, tzinfo=ZONE)  # Monday, 08:00
-        _, end_us = report.report_window(now, "Europe/Moscow", 9, 0)
-        end = dt.datetime.fromtimestamp(end_us / 1_000_000, dt.UTC).astimezone(ZONE)
-        self.assertEqual(end.date(), dt.date(2026, 8, 24))
-
-
-class TestSnapshotDiff(unittest.TestCase):
-    def test_identical_snapshots_report_nothing(self):
-        structure = {"inbounds": [{"key": "0/vless/443", "remark": "SE-exit",
-                                   "enable": True, "clients": ["Art****"]}],
-                     "routing": []}
-        self.assertEqual(report.structure_diff(structure, structure), [])
-
-    def test_changes_are_named(self):
-        before = {"inbounds": [{"key": "0/vless/443", "remark": "SE-exit",
-                                "enable": True, "clients": ["Art****"]}],
-                  "routing": [{"outboundTag": "direct"}]}
-        after = {"inbounds": [{"key": "0/vless/443", "remark": "SE-exit",
-                               "enable": False, "clients": ["Art****", "Mo*"]},
-                              {"key": "0/trojan/8443", "remark": "new-door",
-                               "enable": True, "clients": []}],
-                 "routing": []}
-        lines = report.structure_diff(before, after)
-        self.assertTrue(any("new-door" in line for line in lines))
-        self.assertTrue(any("disabled" in line for line in lines))
-        self.assertTrue(any("Mo*" in line for line in lines))
-        self.assertTrue(any("routing" in line for line in lines))
-
-    def test_sanitised_inbound_carries_no_secret(self):
-        inbound = {
-            "nodeId": 0, "protocol": "vless", "port": 443, "remark": "SE-exit",
-            "enable": True,
-            "settings": '{"clients": [{"id": "11111111-2222-3333-4444-555555555555", '
-                        '"email": "Grandmother", "subId": "abcdef"}]}',
-            "clientStats": [{"email": "Grandmother", "up": 1, "down": 2}],
-        }
-        sanitised = report.sanitise_inbound(inbound)
-        flat = str(sanitised)
-        self.assertNotIn("11111111", flat, "a client UUID is a credential")
-        self.assertNotIn("abcdef", flat, "a subscription id is a credential")
-        self.assertIn("Grandmother", flat, "a name is the operator's own handle, not a secret")
-
-
 class TestPanelDatabase(unittest.TestCase):
-    """The panel is read through its database, so the shape the rest of the
-    letter expects is produced here and nowhere else; these hold that shape
-    against a synthetic database with the panel's own column names."""
+    """The panel is read through its database, so the shape everything else
+    expects is produced here and nowhere else; these hold that shape against a
+    synthetic database with the panel's own column names."""
 
-    def make_db(self):
-        import sqlite3
-
-        path = Path(tempfile.mkdtemp(prefix="skibidi-panel-")) / "x-ui.db"
-        with sqlite3.connect(path) as db:
-            db.executescript("""
-                CREATE TABLE inbounds (id INTEGER PRIMARY KEY, up INTEGER, down INTEGER,
-                    remark TEXT, enable INTEGER, port INTEGER, protocol TEXT,
-                    settings TEXT, node_id INTEGER);
-                CREATE TABLE client_traffics (id INTEGER PRIMARY KEY, inbound_id INTEGER,
-                    email TEXT, up INTEGER, down INTEGER, total INTEGER,
-                    expiry_time INTEGER, enable INTEGER, last_online INTEGER);
-                CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT);
-                CREATE TABLE nodes (id INTEGER PRIMARY KEY, name TEXT, remark TEXT,
-                    status TEXT, last_heartbeat INTEGER, latency_ms INTEGER,
-                    cpu_pct REAL, mem_pct REAL, panel_version TEXT, xray_version TEXT);
-                INSERT INTO inbounds VALUES (1, 10, 20, 'SE-exit', 1, 443, 'vless',
-                    '{"clients": [{"id": "11111111-2222-3333-4444-555555555555",
-                                   "email": "Grandmother", "subId": "abcdef"}]}', NULL);
-                INSERT INTO client_traffics VALUES (1, 1, 'Grandmother', 5, 7, 100, 0, 1, 1735680000000);
-                INSERT INTO settings VALUES (1, 'xrayTemplateConfig',
-                    '{"routing": {"rules": [{"outboundTag": "direct", "user": ["Grandmother"]}]}}');
-                INSERT INTO nodes VALUES (1, 'node-b', '', 'online', 1700000000, 42, 1.0, 20.0, '3.7.0', '25.1.1');
-            """)
-        return path
-
-    def test_inbounds_come_out_in_the_shape_the_letter_reads(self):
-        db = report.open_panel_db(str(self.make_db()))
+    def test_inbounds_come_out_in_the_shape_the_reporter_reads(self):
+        db = report.open_panel_db(str(make_panel_db()))
         inbounds = report.db_inbounds(db)
         self.assertEqual(inbounds[0]["remark"], "SE-exit")
         self.assertEqual(inbounds[0]["clientStats"][0]["email"], "Grandmother")
         self.assertEqual(report.client_traffic(inbounds[0]["clientStats"][0]), (5, 7, 1735680000000))
-        sanitised = report.sanitise_inbound(inbounds[0])
-        self.assertNotIn("11111111", str(sanitised))
-
-    def test_routing_keeps_rules_and_drops_users(self):
-        db = report.open_panel_db(str(self.make_db()))
-        self.assertEqual(report.db_routing(db), [{"outboundTag": "direct"}])
 
     def test_nodes_and_their_state_need_no_token(self):
-        db = report.open_panel_db(str(self.make_db()))
+        db = report.open_panel_db(str(make_panel_db()))
         nodes = report.db_nodes(db)
         self.assertEqual(nodes[0]["name"], "node-b")
         self.assertEqual(nodes[0]["status"], "online")
 
-    def test_the_database_is_opened_read_only(self):
-        import sqlite3
+    def test_a_panel_without_node_mode_is_an_empty_fleet_not_an_error(self):
+        path = make_panel_db()
+        with sqlite3.connect(path) as db:
+            db.execute("DROP TABLE nodes")
+        self.assertEqual(report.db_nodes(report.open_panel_db(str(path))), [])
 
-        db = report.open_panel_db(str(self.make_db()))
+    def test_the_database_is_opened_read_only(self):
+        db = report.open_panel_db(str(make_panel_db()))
         with self.assertRaises(sqlite3.OperationalError):
             db.execute("DELETE FROM inbounds")
 
@@ -292,115 +104,138 @@ class TestPanelDatabase(unittest.TestCase):
             report.open_panel_db("/nonexistent/x-ui.db")
 
 
-class TestMplStyle(unittest.TestCase):
-    def test_a_delivered_style_file_owns_the_series_cycle(self):
-        style = Path(tempfile.mkdtemp(prefix="skibidi-style-")) / "test.mplstyle"
-        style.write_text("axes.prop_cycle: cycler('color', ['ABCDEF', '123456'])\n")
-        os.environ["SKIBIDI_MPLSTYLE_FILE"] = str(style)
-        try:
-            plt = report._matplotlib()
-            if plt is None:
-                self.skipTest("matplotlib is not available here")
-            cycle = [color.lstrip("#").upper() for color in report.chart_cycle(plt)]
-            self.assertEqual(cycle, ["ABCDEF", "123456"])
-        finally:
-            del os.environ["SKIBIDI_MPLSTYLE_FILE"]
+class TestGatherPanel(unittest.TestCase):
+    def test_nodes_and_clients_come_out_in_the_shape_the_rules_read(self):
+        config = {"panel": {"db": str(make_panel_db())}}
+        panel = report.gather_panel(config, 1_790_000_000 * 1_000_000)
+        self.assertEqual(panel["nodes"], [{"name": "node-b", "online": True}])
+        client = panel["clients"][0]
+        self.assertEqual(client["label"], "Grandmother")
+        self.assertTrue(client["enable"])
+        self.assertAlmostEqual(client["cap_share"], 12 / 100)
+        self.assertIsNone(client["expires_days"])
 
 
-# The shape of ddlc-themes' letter file, cut to what these tests read
-THEME = {
-    "colors": {
-        "ground": "#FFFFFF", "text": "#222222", "muted": "#64595B", "grid": "#DADADA",
-        "code-ground": "#FFDBF0", "line": "#FFBDE1", "accent": "#BB5599",
-        "danger": "#CC0C29", "ok": "#76C332",
-        "series-1": "#BB5599", "series-2": "#CC0C29", "series-3": "#6868B4",
-        "series-4": "#76C332", "series-5": "#6C4681",
-    },
-    "styles": {"inform": "border:6px solid #FFBDE1;background:#FFE6F5"},
-}
+class TestTraffic(unittest.TestCase):
+    def families(self, db):
+        connection = report.open_panel_db(str(db))
+        return report.traffic_families(report.panel_traffic(report.db_inbounds(connection)))
+
+    def by_name(self, families):
+        return {item["name"]: item for item in families}
+
+    def test_traffic_is_per_inbound_and_per_client_in_both_directions(self):
+        families = self.by_name(self.families(make_panel_db()))
+        inbound = families["vpn_inbound_traffic_bytes_total"]
+        client = families["vpn_client_traffic_bytes_total"]
+        self.assertEqual(inbound["type"], "counter")
+        self.assertEqual(sorted(inbound["samples"], key=lambda pair: pair[0]["direction"]),
+                         [({"inbound": "SE-exit", "direction": "down"}, 20.0),
+                          ({"inbound": "SE-exit", "direction": "up"}, 10.0)])
+        self.assertEqual(sorted(client["samples"], key=lambda pair: pair[0]["direction"]),
+                         [({"client": "Grandmother", "direction": "down"}, 7.0),
+                          ({"client": "Grandmother", "direction": "up"}, 5.0)])
+
+    def test_two_inbounds_with_one_remark_add_up_instead_of_colliding(self):
+        # The station refuses a body that repeats a label set, and the panel
+        # lets two inbounds on two nodes share a remark
+        families = self.by_name(self.families(make_panel_db(extra_inbounds=True)))
+        down = [pair for pair in families["vpn_inbound_traffic_bytes_total"]["samples"]
+                if pair[0]["direction"] == "down"]
+        self.assertEqual(down, [({"inbound": "SE-exit", "direction": "down"}, 22.0)])
+
+    def test_no_credential_is_in_what_leaves(self):
+        text = report.skibidi_push.render(self.families(make_panel_db()))
+        for secret in (UUID, "abcdef", "subId"):
+            self.assertNotIn(secret, text)
+
+    def test_every_name_is_prefixed(self):
+        for item in self.families(make_panel_db()):
+            self.assertTrue(item["name"].startswith("vpn_"))
 
 
-class TestPalette(unittest.TestCase):
-    def test_the_theme_fills_slots_and_the_cycle_keeps_its_order(self):
-        palette = report.load_palette(THEME)
-        self.assertEqual(palette["warn"], "#CC0C29")
-        self.assertEqual(palette["paper"], "#FFFFFF")
-        self.assertEqual(palette["ok"], "#76C332")
-        # The order is a deuteranopia guarantee, not a taste — see the theme
-        self.assertEqual(palette["cycle"],
-                         ["#BB5599", "#CC0C29", "#6868B4", "#76C332", "#6C4681"])
-
-    def test_an_unthemed_machine_still_renders(self):
-        palette = report.load_palette({})
-        self.assertEqual(palette["ink"], report.PALETTE_DEFAULTS["ink"])
-        self.assertEqual(len(palette["cycle"]), 5)
-
-    def test_a_broken_letter_file_is_no_theme_at_all(self):
-        import tempfile
-
-        broken = Path(tempfile.mkdtemp(prefix="skibidi-theme-")) / "ddlc-mail.json"
-        broken.write_text("{ not json")
-        self.assertEqual(report.load_theme(str(broken)), {})
-        self.assertEqual(report.load_theme("/nonexistent/ddlc-mail.json"), {})
-
-    def test_the_inform_dialog_wears_the_theme_s_pop_up(self):
-        saved = report.THEME
-        report.THEME = THEME
-        try:
-            box = report.inform_dialog("Needs attention", ["a node is down"])
-        finally:
-            report.THEME = saved
-        self.assertIn(THEME["styles"]["inform"], box)
-
-    def test_unthemed_the_inform_dialog_is_framed_in_warn(self):
-        box = report.inform_dialog("Needs attention", ["a node is down"])
-        self.assertIn(report.PALETTE_DEFAULTS["warn"], box)
-
-
-class TestTrafficSeries(unittest.TestCase):
-    def test_daily_deltas_clamp_a_counter_reset(self):
-        day = dt.date(2026, 8, 24)
-        snapshots = {
-            day: {"traffic": {"inbounds": {"a": {"remark": "SE", "up": 100, "down": 100}},
-                              "clients": {}}},
-            day + dt.timedelta(days=1): {
-                "traffic": {"inbounds": {"a": {"remark": "SE", "up": 10, "down": 5}},
-                            "clients": {}}},
-        }
-        series = report.daily_inbound_series(snapshots)
-        self.assertEqual(series[0][1], {"SE": 15}, "a reset must not yield a negative day")
-
-
-class TestProbe(unittest.TestCase):
-    """The deploy's pull probe must fail loudly, never vacuously.
-
-    It exists because a hand-built ssh once stayed green while the letter's
-    own pull was dead; the probe reuses pull_node, and these hold that a
-    refusing node turns the exit code, and that an answering fleet does not.
-    """
-
-    CONFIG = {"nodes": [{"name": "alpha", "host": "100.100.0.2"}]}
-
+class CommandCase(unittest.TestCase):
     def setUp(self):
-        self.original = report.pull_node
-        self.addCleanup(setattr, report, "pull_node", self.original)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.file = self.dir / "traffic.prom"
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ["SKIBIDI_PUSH_TEXTFILE"] = str(self.file)
+        self.config = {"panel": {"db": str(make_panel_db())}}
 
-    def test_a_refusing_node_fails_the_probe(self):
-        def refuse(config, node, start_us, end_us):
-            raise report.StaleWindow("this key exports metrics and does nothing else")
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = report.main(list(argv), self.config)
+        return code, out.getvalue(), err.getvalue()
 
-        report.pull_node = refuse
-        self.assertEqual(report.probe(self.CONFIG), 1)
 
-    def test_an_answer_without_an_export_fails_the_probe(self):
-        # A node whose sshd answers with something that is not the export —
-        # a login banner, a shell's error — must not count as alive
-        report.pull_node = lambda config, node, start_us, end_us: {"unexpected": True}
-        self.assertEqual(report.probe(self.CONFIG), 1)
+class TestTrafficCommand(CommandCase):
+    def test_the_traffic_is_written_for_the_collector_to_add_to_its_push(self):
+        self.assertEqual(self.run_main("traffic"), (0, "", ""))
+        families = parse_exposition(self.file.read_text())
+        self.assertIn("vpn_client_traffic_bytes_total", families)
+        self.assertIn("vpn_inbound_traffic_bytes_total", families)
 
-    def test_an_answering_fleet_passes(self):
-        report.pull_node = lambda config, node, start_us, end_us: {"samples": []}
-        self.assertEqual(report.probe(self.CONFIG), 0)
+    def test_the_file_appears_whole_or_not_at_all(self):
+        self.run_main("traffic")
+        self.assertEqual([path.name for path in self.dir.iterdir()], ["traffic.prom"])
+
+    def test_a_panel_with_no_traffic_yet_leaves_no_file(self):
+        self.run_main("traffic")
+        with sqlite3.connect(self.config["panel"]["db"]) as db:
+            db.execute("DELETE FROM inbounds")
+            db.execute("DELETE FROM client_traffics")
+        self.assertEqual(self.run_main("traffic"), (0, "", ""))
+        self.assertFalse(self.file.exists(), "an old file would be pushed as if it were current")
+
+    def test_a_panel_that_does_not_answer_fails_and_removes_the_old_file(self):
+        self.run_main("traffic")
+        self.config["panel"]["db"] = "/nonexistent/x-ui.db"
+        code, _out, err = self.run_main("traffic")
+        self.assertEqual(code, 1)
+        self.assertIn("panel", err)
+        self.assertFalse(self.file.exists())
+
+    def test_the_command_pushes_nothing_itself(self):
+        # The collector owns the group; a second writer would be the stale
+        # series the single writer exists to prevent
+        self.assertNotIn("skibidi_push.push(", SCRIPT.read_text())
+
+
+class TestProblemsCommand(CommandCase):
+    def test_a_quiet_panel_prints_nothing(self):
+        self.assertEqual(self.run_main("problems"), (0, "", ""))
+
+    def test_an_offline_node_is_one_line(self):
+        with sqlite3.connect(self.config["panel"]["db"]) as db:
+            db.execute("UPDATE nodes SET status = 'offline'")
+        code, out, _err = self.run_main("problems")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.splitlines()), 1)
+        self.assertIn("node-b", out)
+
+    def test_a_panel_that_does_not_answer_is_itself_a_problem_not_a_crash(self):
+        self.config["panel"]["db"] = "/nonexistent/x-ui.db"
+        code, out, _err = self.run_main("problems")
+        self.assertEqual(code, 0)
+        self.assertIn("panel", out)
+
+
+class TestWhatIsGone(unittest.TestCase):
+    def test_the_letter_and_its_snapshots_are_not_commands_any_more(self):
+        for command in ("send", "snapshot", "probe", "push"):
+            with self.subTest(command=command):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(report.main([command], {"panel": {"db": "/nonexistent"}}), 2)
+
+    def test_the_script_mails_nothing(self):
+        text = SCRIPT.read_text()
+        for word in ("sendmail", "EmailMessage", "snapshot"):
+            self.assertNotIn(word, text)
 
 
 if __name__ == "__main__":

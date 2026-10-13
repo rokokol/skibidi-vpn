@@ -76,8 +76,38 @@ Things in these roles that read as workarounds and are not: permanent choices th
 
 ## The metrics API is plain HTTP with no authentication
 
-**Where:** `roles/metrics/templates/skibidi-metrics-api.socket.j2` and `skibidi-metrics-api@.service.j2`, the API in `roles/metrics/files/skibidi-metrics.py`, the pull in `roles/reporter/files/skibidi-report.py`, and the metrics API checks in `roles/checker/templates/skibidi-check.j2`. The contract is `docs/metrics-api.md`
+**Where:** `roles/metrics/templates/skibidi-metrics-api.socket.j2` and `skibidi-metrics-api@.service.j2`, the API in `roles/metrics/files/skibidi-metrics.py`, the daily check's reads in `roles/checker/files/skibidi-daily.py`, and the metrics API checks in `roles/checker/templates/skibidi-check.j2`. The contract is `docs/metrics-api.md`
 
 **Why it differs from the obvious route:** the obvious route for data that leaves a host is TLS and a credential. The API serves on the tailnet alone, where WireGuard already encrypts every packet and authenticates its source by node key, and a TLS certificate or a token would add a secret to rotate on every node without adding a party that can be kept out. Reach is decided below HTTP instead: the socket is bound to the tunnel interface, admits tunnel sources alone, has no firewall rule of its own, and the checker turns red when any of the three drifts. The read side carries no privilege worth a credential either: a dynamic user that can only read one store, in a process without a network of its own. It replaced an SSH export with a forced-command key, which had to stop once Tailscale SSH took port 22 on the tailnet address, and whose guard was the one line between a key and a shell. The mail host's statistics API makes the same trade, so one dashboard reads both alike
 
 **What returning to the obvious route breaks:** a token on every node is a secret in a file the registry must not hold and a vault must carry to each deploy, and a certificate on a tailnet address needs either a private CA every reader trusts or a public name that puts the node in Certificate Transparency
+
+---
+
+## The push to the station borrows the backup's account, host and rule
+
+**Where:** `roles/metrics/templates/push.env.j2`, which turns `backup_url` into the target, `roles/metrics/files/skibidi_push.py`, which pushes, and the units that read the target file
+
+**Why it differs from the obvious route:** the obvious route for a second service on the same station is its own address variable, its own account and its own password. The station puts both behind one htpasswd, and the instance label the Pushgateway accepts must equal the login, so a second account would be a second name for the same node. The push therefore reads the station from `backup_url`, the account from `backup_user`, the password from the backup role's root-only file at the moment it needs it, and asks `skibidi-backup target` whether the station may be reached over plain HTTP. Only the Pushgateway's port is new. A node without `backup_url` pushes nothing, so the dashboard and the backup switch on and off together
+
+**What returning to the obvious route breaks:** a second copy of the address drifts from the backup's when a station moves, a second password is one more secret in the vault, and a second copy of the plain-HTTP rule is the copy that gets forgotten when the first one tightens
+
+---
+
+## The daily check reads the last record of the check and does not run it again
+
+**Where:** `roles/checker/templates/skibidi-check.j2`, which writes `checker_result_file` as its last act, and `roles/checker/files/skibidi-daily.py`, which reads it
+
+**Why it differs from the obvious route:** the obvious route for "list everything still open" is to run every check once more. Some checks keep a count between runs, the master's missed answers among them, and a second run each morning would count a miss twice and raise the alert early. The daily check therefore reads what the last run ended with, and treats a record older than the check's own silence limit as a finding in itself: a dead check timer must not replay its last failures as if they were fresh. The rules for everything the check does not test are in `roles/metrics/files/skibidi_problems.py` alone, and the check does not repeat them, so a fact is never listed twice in one mail
+
+**What returning to the obvious route breaks:** the master check fires one day early after a bad night, and a second list of rules drifts from the first until the same trouble is listed in two words
+
+---
+
+## The collector is the only writer of a node's push group, and it replaces the group
+
+**Where:** `roles/metrics/files/skibidi_push.py` (`PUT`), `roles/metrics/files/skibidi-metrics.py` (`traffic_text`), and the master's `skibidi-report traffic` in `roles/reporter/files/skibidi-report.py`, which writes a file and pushes nothing
+
+**Why it differs from the obvious route:** the obvious route is for each program to push its own numbers with `POST`, which replaces only the metric families in its body and leaves the rest of the group alone. That leaves a series behind for good once the thing it described is gone: a solved problem is a `node_problem` series the next body no longer names, and a `POST` of a family that has no series left does not touch the family at all. The station alerts for as long as the series stays. `PUT` replaces the whole group, so the node says its complete state each time and anything missing from it is gone. That works only with one writer, because two writers wipe each other. The path allows one group per account, so the master's traffic cannot have a group of its own. The reporter therefore writes the traffic to a file, and the collector validates the file and adds it to its body. A file nobody refreshed is left out, so a stopped reporter cannot keep old numbers alive either
+
+**What returning to the obvious route breaks:** with `POST` a recovered node keeps its alerts open, and with `PUT` from two programs the master's traffic and its samples take turns disappearing

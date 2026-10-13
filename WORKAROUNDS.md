@@ -26,17 +26,17 @@ Run it on the node after switching its core from the panel's UI and connecting a
 
 ---
 
-## The weekly report reads the panel's database, not its API
+## The reporter reads the panel's database, not its API
 
 **Where:** `roles/reporter/files/skibidi-report.py`, which opens `x-ui.db` on the master read-only
 
-**Symptom it prevents:** every report run knocks out whoever else holds the panel's API token, including the admin skill's registry entry
+**Symptom it prevents:** every reporter run knocks out whoever else holds the panel's API token, including the admin skill's registry entry
 
 **Why it happens:** the panel's CLI cannot read a token back, only mint one, and minting rotates the single token it owns
 
-**Why this works:** the report reads the tables the panel has carried since its first releases: `inbounds`, `client_traffics`, `settings` and `nodes`. The price is a coupling to the schema rather than to the API, paid at the deploy-time rehearsal, where a renamed column fails the letter in front of someone rather than on a Monday
+**Why this works:** the reporter reads the tables the panel has carried since its first releases: `inbounds`, `client_traffics` and `nodes`. The price is a coupling to the schema rather than to the API, paid at the deploy-time rehearsal, where a renamed column fails the daily list's panel part in front of someone rather than on a morning
 
-**Removal check:** the panel's CLI and API issuing a named, scoped token without rotating another; then the report can go back to the contract the skill uses
+**Removal check:** the panel's CLI and API issuing a named, scoped token without rotating another; then the reporter can go back to the contract the skill uses
 
 **Upstream:** not reported yet
 

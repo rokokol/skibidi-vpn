@@ -20,70 +20,61 @@ SOCKET='roles/metrics/templates/skibidi-metrics-api.socket.j2'
 SERVICE='roles/metrics/templates/skibidi-metrics-api@.service.j2'
 LEGACY='roles/metrics/tasks/legacy-ssh-export.yml'
 CHECK='roles/checker/templates/skibidi-check.j2'
-REPORT_CONFIG='roles/reporter/templates/report.toml.j2'
+PUSH='roles/metrics/files/skibidi_push.py'
+PROBLEMS='roles/metrics/files/skibidi_problems.py'
+PUSH_ENV='roles/metrics/templates/push.env.j2'
+METRICS_TASKS='roles/metrics/tasks/main.yml'
+METRICS_DEFAULTS='roles/metrics/defaults/main.yml'
+DAILY='roles/checker/files/skibidi-daily.py'
+DAILY_SERVICE='roles/checker/templates/skibidi-daily.service.j2'
+DAILY_TIMER='roles/checker/templates/skibidi-daily.timer.j2'
+REPORTER_DEFAULTS='roles/reporter/defaults/main.yml'
+REPORTER_TASKS='roles/reporter/tasks/main.yml'
+ALERT_SCRIPT='roles/checker/templates/skibidi-alert.j2'
+SITE='site.yml'
 TAILSCALE_SSH='roles/tailscale/tasks/ssh.yml'
 BACKUP='roles/backup/templates/skibidi-backup.j2'
 BACKUP_SERVICE='roles/backup/templates/skibidi-backup.service.j2'
 BACKUP_DEFAULTS='roles/backup/defaults/main.yml'
 CHECK_DEFAULTS='roles/checker/defaults/main.yml'
 
-# The weekly letter
+# The reporter
 
-defect 'counters/negative-week' "$REPORT" \
-  '    return new - old if new >= old else new' \
-  '    return new - old' \
-  'a client counter reset turns into a negative week of traffic'
+defect 'traffic/remark-collision' "$REPORT" \
+  '        total = traffic["inbounds"].setdefault(name, {"up": 0, "down": 0})' \
+  '        total = traffic["inbounds"][name] = {"up": 0, "down": 0}' \
+  'two inbounds with one remark push the last one alone, or a body the station refuses'
 
-defect 'cid/attachment-drift' "$REPORT" \
-  '            cid=f"<skibidi-{name}>",' \
-  '            cid="<skibidi-chart>",' \
-  'every chart renders as a broken-image icon in the letter'
+defect 'traffic/credential-in-label' "$REPORT" \
+  '        name = str(inbound.get("remark") or "") or (' \
+  '        name = str(inbound.get("settings")) or (' \
+  'every client UUID and subscription id goes to the station in a label'
 
-defect 'escape/raw-text' "$REPORT" \
-  '{style("p")}">{html.escape(text)}</p>'"'" \
-  '{style("p")}">{text}</p>'"'" \
-  'a client label chosen maliciously becomes live HTML in the mail client'
+defect 'traffic/old-file-kept-when-empty' "$REPORT" \
+  '    if not families:
+        path.unlink(missing_ok=True)
+        return 0' \
+  '    if not families:
+        return 0' \
+  'a panel that counted nothing keeps the last numbers on the dashboard'
 
-defect 'subject/alert-blind' "$REPORT" \
-  '    prefix = "[!] " if data.get("alerts") else ""' \
-  '    prefix = ""' \
-  'trouble no longer reaches the subject line, so nobody opens the letter'
+defect 'traffic/old-file-kept-on-panel-error' "$REPORT" \
+  '        path.unlink(missing_ok=True)
+        print(f"traffic: {error}", file=sys.stderr)' \
+  '        print(f"traffic: {error}", file=sys.stderr)' \
+  'a dead panel keeps its last traffic on the dashboard for as long as it stays dead'
 
-defect 'charts/dangling-cid' "$REPORT" \
-  '        if png:
-            charts[name] = png' \
-  '        charts[name] = png' \
-  'an empty week attaches nothing yet references it, or crashes the send'
+defect 'reporter/old-snapshot-timer-kept' "$REPORTER_TASKS" \
+  '    - skibidi-snapshot.timer
+  register: reporter_old_timers' \
+  '  register: reporter_old_timers' \
+  'a timer of the deleted letter keeps firing into a script that no longer has its command'
 
-defect 'window/weekday-blind' "$REPORT" \
-  '    end -= dt.timedelta(days=(local.date().weekday() - weekday) % 7)' \
-  '    _ = weekday' \
-  'a delayed run reports a window that ends mid-week and nobody notices'
+defect 'reporter/gated-on-mail' "$SITE" \
+  "      when: \"'master' in group_names\"" \
+  "      when: \"'master' in group_names and reporter_to | length > 0\"" \
+  'a master without an alert address gets neither its traffic on the dashboard nor its panel items'
 
-defect 'sanitise/credentials-through' "$REPORT" \
-  '        clients.append(client_label(client.get("email")))' \
-  '        clients.append(json.dumps(client))' \
-  'the weekly snapshot in /var/lib carries every client UUID and subscription id'
-
-defect 'diff/enable-blind' "$REPORT" \
-  '        if was["enable"] != now["enable"]:' \
-  '        if False:' \
-  'an inbound switched off by mistake never appears in what-changed'
-
-defect 'alerts/silent-absence' "$REPORT" \
-  '    for name, reason in data.get("unreachable", []):' \
-  '    for name, reason in []:' \
-  'a node that did not answer reads as a healthy, quiet node'
-
-defect 'pull/cut-week-accepted' "$REPORT" \
-  '    if payload.get("truncated"):' \
-  '    if False:' \
-  'a week cut at the row limit is reported as a quiet week'
-
-defect 'pull/master-skipped' "$REPORT_CONFIG" \
-  "{% for host in ([inventory_hostname] + groups['nodes'] | default([])) | unique | sort %}" \
-  "{% for host in groups['nodes'] | default([]) | sort if host != inventory_hostname %}" \
-  "the letter no longer reads the master's own store"
 
 # The alert mail
 
@@ -304,3 +295,291 @@ defect 'check/backup-timer-unwatched' "$CHECK_DEFAULTS" \
   '  - name: skibidi-backups.timer
 ' \
   'a backup timer that stopped firing is never noticed'
+
+# The push to the station
+
+defect 'push/post-leaves-solved-problems' "$PUSH" \
+  'method="PUT"' \
+  'method="POST"' \
+  'a problem that was solved stays in the group, and the station alerts on it for good'
+
+defect 'push/wrong-instance' "$PUSH" \
+  "instance/{urllib.parse.quote(user, safe='')}" \
+  'instance/node' \
+  'every node pushes into one group, and the station refuses the instance'
+
+defect 'push/password-in-error' "$PUSH" \
+  'raise PushError(f"the station answered HTTP {error.code}") from None' \
+  'raise PushError(f"the station answered HTTP {error.code} {phrase}") from None' \
+  'the station password lands in the journal at the first refusal'
+
+defect 'push/guard-skipped' "$PUSH" \
+  '    if station["guard"]:' \
+  '    if False:' \
+  'plain HTTP to a station outside the tunnel carries the password in the clear'
+
+defect 'push/prefix-unchecked' "$PUSH" \
+  'if not NAME.match(name) or not (name.startswith(PREFIX) or name in UNPREFIXED):' \
+  'if not NAME.match(name):' \
+  'a metric outside the vpn_ prefix is refused by the station, and so is the whole body'
+
+defect 'push/label-unescaped' "$PUSH" \
+  '    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"'"'"'"'"', '"'"'\\"'"'"')' \
+  '    return str(value)' \
+  'a quote or a newline in a client name breaks the exposition line and the whole push'
+
+defect 'push/repeated-labels-unchecked' "$PUSH" \
+  '            if key in seen:' \
+  '            if False:' \
+  'a repeated label set reaches the station, which refuses the body'
+
+defect 'push/oldest-wins' "$PUSH" \
+  'if key not in newest or ts >= newest[key][0]:' \
+  'if key not in newest or ts <= newest[key][0]:' \
+  'the dashboard shows the oldest sample of the window as the current one'
+
+defect 'collector/failed-push-fails-collect' "$METRICS" \
+  '    if push:
+        push_latest(now_us)' \
+  '    if push:
+        return push_latest(now_us)' \
+  'a station that is down turns every sample into a failed run'
+
+defect 'collector/note-every-run' "$METRICS" \
+  'if state_value(connection, "push_unconfigured_noted") is None:' \
+  'if True:' \
+  'a node without a station fills its journal with the same line every ten minutes'
+
+defect 'collector/dead-probe-pushed' "$METRICS" \
+  '                (now_us - skibidi_push.LATEST_WINDOW_SECONDS * 1_000_000,),' \
+  '                (0,),' \
+  'a probe that stopped answering keeps pushing its last value for ninety days'
+
+defect 'collector/ufw-total-restarts' "$METRICS" \
+  'total = float(state_value(connection, UFW_TOTAL) or 0) + sum(counted)' \
+  'total = sum(counted)' \
+  'the dropped-packet counter resets every ten minutes'
+
+defect 'collector/counters-as-gauges' "$METRICS" \
+  '            "counter" if metric in COUNTERS else "gauge",' \
+  '            "gauge",' \
+  'the dashboard cannot take a rate of a total it was told is a level'
+
+defect 'collector/label-named-detail' "$METRICS" \
+  '        label = DIMENSIONS.get(metric, "detail")' \
+  '        label = "detail"' \
+  'the dashboard queries jail and unit and finds only a label called detail'
+
+defect 'push/target-for-no-station' "$METRICS_TASKS" \
+  '  when: backup_url | length > 0' \
+  '  when: true' \
+  'a node without a station is given an address to push to'
+
+defect 'push/first-sample-pushes' "$METRICS_TASKS" \
+  'argv: [/usr/local/sbin/skibidi-metrics, collect, --no-push]' \
+  'argv: [/usr/local/sbin/skibidi-metrics, collect]' \
+  'the first deploy pushes before the password file exists and logs a failure'
+
+defect 'push/problems-not-installed' "$METRICS_TASKS" \
+  '    - skibidi_problems.py
+' \
+  '' \
+  'the daily check and the master import a module that is not on the node'
+
+defect 'push/secret-in-target-file' "$PUSH_ENV" \
+  'SKIBIDI_PUSH_USER={{ backup_user }}' \
+  'SKIBIDI_PUSH_USER={{ backup_user }}
+SKIBIDI_PUSH_PASSWORD={{ backup_rest_password }}' \
+  'the station password sits in a world-readable file'
+
+defect 'push/guard-dropped' "$PUSH_ENV" \
+  'SKIBIDI_PUSH_GUARD="{{ backup_script }} target"
+' \
+  '' \
+  'the push keeps no rule about plain HTTP, and nothing else enforces it for the push'
+
+defect 'push/gateway-port' "$METRICS_DEFAULTS" \
+  'metrics_push_port: 9091' \
+  'metrics_push_port: 9092' \
+  'every push goes to a port the station does not serve'
+
+defect 'traffic/timer-too-slow' "$REPORTER_DEFAULTS" \
+  'reporter_traffic_interval: 10min' \
+  'reporter_traffic_interval: 1h' \
+  "the master's traffic is older than the station tolerates"
+
+# The open items and the daily check
+
+defect 'problems/disk-limit-exclusive' "$PROBLEMS" \
+  'if disk is not None and disk >= DISK_FULL:' \
+  'if disk is not None and disk > DISK_FULL:' \
+  'a disk exactly at the limit is not listed'
+
+defect 'problems/reboot-blind' "$PROBLEMS" \
+  'if latest.get(("reboot_required", "")):' \
+  'if False:' \
+  'a node that needs a reboot is never listed'
+
+defect 'problems/updates-blind' "$PROBLEMS" \
+  '    if updates:' \
+  '    if False:' \
+  'pending updates are never listed'
+
+defect 'problems/collector-lag-blind' "$PROBLEMS" \
+  'elif now - through / 1_000_000 > COLLECTOR_LAG_SECONDS:' \
+  'elif False:' \
+  'a collector that stopped hours ago leaves every number on the list stale and unflagged'
+
+defect 'problems/expired-client-listed' "$PROBLEMS" \
+  'if client["expires_days"] is not None and 0 <= client["expires_days"] <= EXPIRY_DAYS:' \
+  'if client["expires_days"] is not None and client["expires_days"] <= EXPIRY_DAYS:' \
+  'a client that expired a year ago is listed every morning'
+
+defect 'problems/disabled-client-listed' "$PROBLEMS" \
+  '        if not client["enable"]:
+            continue' \
+  '        if False:
+            continue' \
+  'a client switched off on purpose is listed every morning'
+
+defect 'daily/stale-record-trusted' "$PROBLEMS" \
+  '    if age > max_age_hours * 3600:' \
+  '    if False:' \
+  "the check's timer dies, the daily mail replays last week's failures as current, and the station alerts on them"
+
+defect 'daily/missing-record-quiet' "$PROBLEMS" \
+  '        return [("check.record-missing", "skibidi-check has not recorded a result on this node")]' \
+  '        return []' \
+  'a node whose check never ran reads as a node with nothing open, to the mail and to the station'
+
+defect 'push/duplicate-cause-last-wins' "$METRICS" \
+  '        found.setdefault(cause, skibidi_problems.summary(message))' \
+  '        found[cause] = skibidi_problems.summary(message)' \
+  'two failures of one cause are two series, or the later message hides the first'
+
+defect 'push/traffic-file-unvalidated' "$METRICS" \
+  '        skibidi_push.validate_text(text, taken)' \
+  '        pass' \
+  "one bad line in the master's traffic file makes the station refuse the body that is its sign of life"
+
+defect 'push/stale-traffic-kept' "$METRICS" \
+  '        if now - Path(path).stat().st_mtime > skibidi_push.LATEST_WINDOW_SECONDS:' \
+  '        if False:' \
+  'a reporter that stopped keeps its last traffic on the dashboard'
+
+defect 'push/no-station-reads-as-pushed' "$METRICS" \
+  '                return 3' \
+  '                return 0' \
+  'a node with no station skips its mail, and a failed check is heard by nobody'
+
+defect 'problems/missing-and-stale-share-a-cause' "$PROBLEMS" \
+  '        return [("check.record-stale",' \
+  '        return [("check.record-missing",' \
+  'a check whose timer died and a check that never ran are one alert with two remedies'
+
+defect 'problems/summary-is-the-whole-message' "$PROBLEMS" \
+  '    first = " ".join(message.split(";")[0].split())' \
+  '    first = " ".join(message.split())' \
+  'an alert subject runs on into the consequence and the details'
+
+defect 'problems/cause-unsafe' "$PROBLEMS" \
+  '    return re.sub(r"[^A-Za-z0-9._-]+", "-", text.strip()).strip("-") or "unknown"' \
+  '    return text.strip() or "unknown"' \
+  'a cause with a space or a slash in it breaks the matcher the station alerts by'
+
+defect 'alert/station-last' "$ALERT_SCRIPT" \
+  '        if {{ checker_alert_push }}; then' \
+  '        if false; then' \
+  'a failed check is mailed first and the station hears of it only if the mail node is alive'
+
+defect 'alert/push-failure-swallowed' "$ALERT_SCRIPT" \
+  '        if {{ checker_alert_push }}; then' \
+  '        if {{ checker_alert_push }} || true; then' \
+  'a push that failed or a node with no station is not mailed, and the failure is heard by nobody'
+
+defect 'alert/every-unit-pushed' "$ALERT_SCRIPT" \
+  '    skibidi-check | skibidi-check.service)' \
+  '    *)' \
+  'the daily list and a failed backup are swallowed by a push that has no series for them'
+
+defect 'check/cause-not-recorded' "$CHECK" \
+  "    failed=\"\${failed}\${cause}\"\$'\\t'\"\${*//\$'\\n'/ }\"\$'\\n'" \
+  "    failed=\"\${failed}\${*//\$'\\n'/ }\"\$'\\n'" \
+  'the record has messages and no causes, and the station sees one series named after a sentence'
+
+defect 'push/prefix-exemption-wide' "$PUSH" \
+  'UNPREFIXED = frozenset({"node_problem"})' \
+  'UNPREFIXED = frozenset({"node_problem", "problem"})' \
+  'a second name escapes the vpn_ prefix and collides with whatever else the station keeps'
+
+defect 'push/check-settings-dropped' "$PUSH_ENV" \
+  'SKIBIDI_CHECK_RESULT={{ checker_result_file }}
+' \
+  '' \
+  'the node never says how many problems it has, and the station cannot hear a dead mail node'
+
+defect 'daily/panel-failure-quiet' "$DAILY" \
+  '    if done.returncode != 0:' \
+  '    if False:' \
+  'a master whose panel part crashed reads as a master with nothing open'
+
+defect 'daily/api-silence-quiet' "$DAILY" \
+  "        return [f\"the metrics API of this node did not answer: {getattr(error, 'reason', error)}\"]" \
+  '        return []' \
+  'a node whose metrics API is down reads as a node with nothing open'
+
+defect 'daily/cut-answer-trusted' "$DAILY" \
+  '    if answer.get("truncated"):' \
+  '    if False:' \
+  'a cut answer lacks the newest samples and the list is built from old ones'
+
+defect 'daily/open-items-exit-zero' "$DAILY" \
+  '    print(f"{len(found)} unresolved item(s) on {host}")
+    return 1' \
+  '    print(f"{len(found)} unresolved item(s) on {host}")
+    return 0' \
+  'the unit does not fail, the alert path does not run, and nothing is mailed'
+
+defect 'daily/missing-settings-crash' "$DAILY" \
+  '    if missing:' \
+  '    if False:' \
+  'a run without its settings dies in a traceback whose exit code reads as "something is open"'
+
+defect 'daily/unit-without-settings' "$DAILY_SERVICE" \
+  'EnvironmentFile={{ checker_daily_env_file }}
+' \
+  '' \
+  'the timer runs a daily check that cannot find its record or its API'
+
+defect 'daily/silent-failure' "$DAILY_SERVICE" \
+  'OnFailure=skibidi-alert@%N.service
+' \
+  '' \
+  'the daily check lists what is open into a journal nobody reads'
+
+defect 'daily/timezone-dropped' "$DAILY_TIMER" \
+  ":00:00 {{ checker_daily_timezone }}" \
+  ":00:00" \
+  'the list arrives at nine in the node'"'"'s own zone, which is not where the reader is'
+
+defect 'daily/timer-unwatched' "$CHECK_DEFAULTS" \
+  '  - name: skibidi-daily.timer
+' \
+  '  - name: skibidi-dailies.timer
+' \
+  'a daily check that stopped firing looks exactly like a node with nothing open'
+
+defect 'check/record-skipped' "$CHECK" \
+  'printf '"'"'%s'"'"' "$failed" > "$record.new" && mv "$record.new" "$record"' \
+  'true' \
+  'the daily check has no record to read, or reads one from an earlier day'
+
+defect 'check/failure-not-recorded' "$CHECK" \
+  "    failed=\"\${failed}\${cause}\"\$'\\t'\"\${*//\$'\\n'/ }\"\$'\\n'" \
+  '    failed="${failed}"' \
+  'the check fails and neither the daily list nor the station hears of it'
+
+defect 'check/api-address-blind' "$CHECK" \
+  'if [ "$api_inside" = "yes" ]; then' \
+  'if true; then' \
+  "a node's metrics cross the open internet in clear and the checker says nothing"

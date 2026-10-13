@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=List what is still open on this node
+# The run fails when it lists anything, so the alert unit that mails a failed
+# check mails this list too. A run that lists nothing mails nothing
+OnFailure=skibidi-alert@%N.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/skibidi-daily
+EnvironmentFile={{ checker_daily_env_file }}

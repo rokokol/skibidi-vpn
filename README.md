@@ -44,7 +44,7 @@ ansible-vault encrypt vault.yml
 ansible-playbook site.yml -e @vault.yml --ask-vault-pass
 ```
 
-The panel needs no credential from this repository at all: the weekly report reads the panel's database on the master, opened read-only. The panel's API token belongs to the `3x-ui-admin-skill`, issued in the panel's UI under its own name
+The panel needs no credential from this repository at all: the reporter reads the panel's database on the master, opened read-only. The panel's API token belongs to the `3x-ui-admin-skill`, issued in the panel's UI under its own name
 
 ## Backup
 
@@ -53,7 +53,6 @@ The backup channel is optional and off by default. A node whose file names no ba
 A node that names a station pushes a restic snapshot to it on a timer:
 
 - a copy of the panel's database and of the metric store, each taken with `sqlite3 .backup` into a directory only root can read, and checked for integrity before it leaves
-- on the master, the weekly report's state as well
 
 The certificate in `/root/cert` and acme.sh's home `/root/.acme.sh` are not backed up: a rebuilt node issues a new wildcard over DNS-01 with the token from the vault, and a copy would put the wildcard's private key on one more machine. The Tailscale identity is not backed up either: a restored copy would collide with the original node on the tailnet, while a rebuilt node joins again with the auth key
 
@@ -90,6 +89,19 @@ The next deploy installs the pinned restic and the timer, creates the repository
 ### What the checker watches
 
 Only on a node with `backup_url`: the timer is enabled and has fired within its interval, the station still passes the HTTP rule above, and the secrets and the staged copies stay readable by root alone. A failed push raises the same alert as any other failed unit
+
+## Dashboard
+
+The station that receives a node's backups also draws its health and its traffic. A node that names a station with `backup_url` pushes what it samples to the station's Prometheus Pushgateway, with the same account it backs up with, and the push doubles as the node's sign of life: the station alerts when it goes quiet. The master also pushes the panel's traffic per inbound and per client. A node that names no station pushes nothing and says so once in its journal. What a push carries and how it is authenticated is in the [metrics API](docs/metrics-api.md#the-push)
+
+## Alerts
+
+Trouble reaches the owner on two levels, and a quiet fleet sends no mail at all:
+
+- a failed self-check is reported within the half hour, each problem under its own cause
+- a daily check, every morning, mails once per node and only when something is still open. It lists everything open, urgent or not: a failed check, a reboot that is required, pending updates, stale geodata, a nearly full disk, and on the master a node the panel sees offline or a client near its traffic limit or its expiry. An item that stays open comes again the next morning
+
+A failed self-check goes to the station first, so the station can alert by its own relay while the mail node is down, and the node mails it directly only if that push fails or the node names no station. The weekly letter is gone: the numbers are on the dashboard, and what needs attention is in the daily list
 
 ## Use
 
@@ -132,8 +144,8 @@ Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEV
 | `certs` | a wildcard certificate over DNS-01, so only the wildcard reaches Certificate Transparency |
 | `nginx` | port 80, and the optional egress-address echo |
 | `fail2ban` | the sshd, recidive and panel address-limit jails, each proven to read the log it is meant to |
-| `metrics` | a ten-minute sampler of what the panel does not know, served read-only on the tailnet by the [metrics API](docs/metrics-api.md) |
-| `reporter` | the Monday letter, built from the panel's database and the fleet's metric stores; master only |
-| `backup` | the optional push of the panel's database, the metric store and the report's state to a restic receiver the node names; off by default, see [Backup](#backup) |
-| `checker` | the half-hourly self-check, mailed on failure straight past the master |
+| `metrics` | a ten-minute sampler of what the panel does not know, served read-only on the tailnet by the [metrics API](docs/metrics-api.md) and pushed to the station's dashboard, see [Dashboard](#dashboard) |
+| `reporter` | on the master: the open items only the panel knows, and the panel's traffic for the dashboard |
+| `backup` | the optional push of the panel's database and the metric store to a restic receiver the node names; off by default, see [Backup](#backup) |
+| `checker` | the half-hourly self-check, mailed on failure straight past the master, and the daily list of everything still open, see [Alerts](#alerts) |
 | `warp` | Cloudflare WARP as a local proxy, with a watchdog that counts its own restarts |

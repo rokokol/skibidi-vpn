@@ -1,6 +1,6 @@
 # Metrics API
 
-Every node serves its metric store as JSON over plain HTTP on its tailnet address. The weekly letter reads the fleet through it, the master's own store included, and a dashboard can read it the same way. The paths, parameters, shapes and status codes follow the mail host's `mail-stats` API, so one client can ask both
+Every node serves its metric store as JSON over plain HTTP on its tailnet address. The daily check reads its own node through it, and a dashboard can read any node the same way. The numbers also leave the node by a push, described under "The push" below. The paths, parameters, shapes and status codes follow the mail host's `mail-stats` API, so one client can ask both
 
 The port is `metrics_api_port` in `roles/metrics/defaults/main.yml`. The examples below use `9099` and a tailnet address from the documentation range
 
@@ -69,3 +69,50 @@ curl 'http://100.64.0.7:9099/v1/aggregates?resolution=day&from=1789401600&to=179
 ## Metrics
 
 The collector, `roles/metrics/files/skibidi-metrics.py`, is the list: each probe names the metrics it writes, and `COUNTERS` and `DIMENSIONS` beside them say which are counters and what their detail means
+
+## The push
+
+The same numbers leave the node a second way, for the station's dashboard. After each collection the collector pushes the newest value of every series to the Prometheus Pushgateway of the station that receives the node's backups. The master pushes the panel's traffic besides. A node whose file has no `backup_url` pushes nothing, and says so once in its journal
+
+- The station is the backup station and the account is the backup account. `backup_url` names the host, `backup_user` the login, and the password is the backup role's root-only file `rest-password`. The Pushgateway's port is `metrics_push_port`, which the examples below call `9091`. The role writes the target to `metrics_push_env_file` for the units to read, and no secret is in it
+- A push is `PUT /metrics/job/vpn/instance/<account>` with HTTP basic auth as that account. The station refuses any other path, any read, and an instance that is not the login. The job is always `vpn`, and a node has one group, so the station sees `instance=<account>` on every series and nothing about the path changed
+- `PUT` replaces the whole group, and the collector is its only writer. A problem that was solved, a jail that went away and a traffic file that stopped arriving are missing from the next body and leave the station with it. A second writer would be wiped by every push or leave stale series behind, which is why the master's reporter writes its traffic to a file and the collector adds the file to its body
+- Plain HTTP is accepted for a station inside the tunnel ranges and HTTPS anywhere, by the same rule as the backup. The push asks `skibidi-backup target` before it sends the password
+- The body is the Prometheus text format, every name starts with `vpn_`, and no node name is in a metric name. The label that identifies the node is the instance
+- A push at least every quarter hour is the contract: the station alerts when `push_time_seconds` of a node is older than an hour. A push that fails is a line in the journal and costs no sample
+
+```sh
+curl -u node-a:<password> --data-binary @body.txt http://100.64.0.2:9091/metrics/job/vpn/instance/node-a
+```
+
+### What a node pushes
+
+The newest sample of each series that is less than two hours old. A probe that stopped answering leaves the push when its last value gets that old, so a dead probe does not look alive. The names come from `PROMETHEUS` in the collector, and a test holds that table to the probes
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `vpn_load1`, `vpn_memory_used_ratio`, `vpn_disk_used_ratio`, `vpn_disk_total_bytes`, `vpn_uptime_seconds` | gauge | none |
+| `vpn_conntrack_used_ratio`, `vpn_conntrack_entries` | gauge | none |
+| `vpn_established_sockets`, `vpn_established_sockets_without_timer` | gauge | none |
+| `vpn_fail2ban_failed_total`, `vpn_fail2ban_banned_total` | counter | `jail` |
+| `vpn_fail2ban_banned` | gauge | `jail` |
+| `vpn_unit_restarts_total` | counter | `unit` |
+| `vpn_timer_last_fired_timestamp_seconds` | gauge | `timer` |
+| `vpn_pending_updates`, `vpn_reboot_required` | gauge | none |
+| `vpn_ufw_drops_total` | counter | none |
+| `node_problem` | gauge | `key`, `summary` |
+
+`node_problem` is the one name without the prefix, because the station's own rule reads it. It has one series of value `1` for each failure the last self-check recorded, with the help text "One unresolved problem this node reports of itself, by cause". `key` is the cause: letters, digits, dots, underscores and hyphens, the same on every run, with nothing in it that varies, so the station can keep one alert for it. `summary` is the first clause of the check's message, a short plain line that becomes the alert's subject. A record that is missing, or older than the check's silence limit, is one problem of its own with the key `check.record-missing` or `check.record-stale`. A clean check pushes no `node_problem` series at all, and a solved problem is missing from the next body. The quiet items of the daily check, such as pending updates and a required reboot, are not problems here. A failed check also triggers a push at once, from its alert unit, and mails only if that push fails
+
+The firewall drops are counted per interval in the store. The push turns them into a running total that the collector keeps in the store's state, because a dashboard cannot add up an interval count that arrives again with every push
+
+### What the master adds
+
+The reporter's own timer writes the panel's traffic to `metrics_push_textfile` on a master that names a station, and the collector adds the file to its body, in the same group as the master's samples. A file older than the push window, or one the station would refuse, is left out with a line in the journal. A panel that has counted nothing, or does not answer, leaves no file
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `vpn_inbound_traffic_bytes_total` | counter | `inbound`, `direction` |
+| `vpn_client_traffic_bytes_total` | counter | `client`, `direction` |
+
+`inbound` is the panel's remark, and inbounds that share a remark are added up under it. `direction` is `up` or `down`. `client` is the label the panel carries, which this repository already names in its letters and snapshots as the owner's own handle. A UUID, a subscription id or a key is never a label. The panel resets its counters when the owner does, and a reset is an ordinary counter reset

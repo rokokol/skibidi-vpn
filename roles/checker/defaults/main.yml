@@ -4,6 +4,31 @@
 checker_boot_delay: 10min
 checker_interval: 30min
 
+# The check leaves the failures it ended with here, one per line. The daily
+# check lists them again, because it must not run every check a second time
+checker_state_dir: /var/lib/skibidi-check
+checker_result_file: "{{ checker_state_dir }}/failures"
+# How old the record may be before it counts as no record: the silence the
+# watched timers allow the check itself. The daily list and the push to the
+# station both judge the record by this
+checker_result_max_age_hours: "{{ (checker_watched_timers | selectattr('name', 'equalto', 'skibidi-check.timer') | first).max_silence_hours }}"
+
+# The second level: a mail once a day, only when something is still open, with
+# everything that is. The first level is the check above, which mails within
+# half an hour of a failure. The hour is on the clock of the zone, because the
+# letter is for a person who wakes in one
+checker_daily_hour: 9
+checker_daily_timezone: Europe/Moscow
+
+# The alert unit pushes the failed check to the station with this command
+# before it mails, and mails only when it does not exit 0. The collector owns
+# the push; exit 3 means the node names no station
+checker_alert_push: /usr/local/sbin/skibidi-metrics push
+checker_alert_to_file: /etc/skibidi/alert-to
+
+# The daily check's settings, for its unit and for a run by hand
+checker_daily_env_file: /etc/skibidi/daily.env
+
 # Where a failure report goes. The mail host decides which nodes may use its
 # intake and authorises by source address, so this repository carries the
 # address of the intake and nothing about who is allowed to use it
@@ -35,6 +60,10 @@ checker_watched_timers:
   # Daily with an hour of scatter, so a gap past 25 hours is a missed day.
   # Installed only where the optional backup channel is on
   - name: skibidi-backup.timer
+    max_silence_hours: 30
+  # Daily, with a few minutes of scatter. This is the timer whose silence looks
+  # exactly like a quiet node, so it is the one that must be watched
+  - name: skibidi-daily.timer
     max_silence_hours: 30
 
 # Units that must be running for the node to be doing its job

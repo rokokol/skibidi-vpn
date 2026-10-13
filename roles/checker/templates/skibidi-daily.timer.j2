@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=List what is still open on this node, once a day
+
+[Timer]
+OnCalendar=*-*-* {{ '%02d' | format(checker_daily_hour) }}:00:00 {{ checker_daily_timezone }}
+# The fleet's nodes would otherwise all mail in the same second
+RandomizedDelaySec=5min
+# A node that was off at nine still lists what is open when it comes back
+Persistent=true
+
+[Install]
+WantedBy=timers.target

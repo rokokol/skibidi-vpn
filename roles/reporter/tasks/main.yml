@@ -1,22 +1,55 @@
 ---
-- name: Install what the charts need
-  ansible.builtin.apt:
-    name: [python3-matplotlib]
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+# The weekly letter, its daily snapshot and the charts are gone. A deploy
+# removes what an earlier one installed, timers first so that nothing fires
+# into a file that is about to go
+# A node that never had them has no such unit, and that is the answer wanted
+- name: Stop the timers of the letter and its snapshot
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - skibidi-report.timer
+    - skibidi-snapshot.timer
+  register: reporter_old_timers
+  failed_when: reporter_old_timers.failed and 'Could not find' not in (reporter_old_timers.msg | default(''))
+  when: not ansible_check_mode
 
-# 0700 because the snapshots inside, sanitised as they are, still describe the
-# fleet's structure and its clients' masked names
-- name: Make the state directory
+- name: Remove the units of the letter and its snapshot
   ansible.builtin.file:
-    path: "{{ reporter_state_dir }}"
+    path: /etc/systemd/system/{{ item }}
+    state: absent
+  loop:
+    - skibidi-report.timer
+    - skibidi-report.service
+    - skibidi-snapshot.timer
+    - skibidi-snapshot.service
+  notify: Reload systemd
+
+- name: Look for the snapshots of the letter
+  ansible.builtin.find:
+    paths: "{{ metrics_push_textfile | dirname }}"
+    patterns: ["snapshot-*.json"]
+  register: reporter_old_snapshots
+
+# The charts' cache and font are gone with the charts. The letter's theme file
+# is the checker's, which dresses the alert mail in it
+- name: Remove what the letter left
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ (reporter_old_snapshots.files | map(attribute='path') | list) + ['/etc/skibidi/ddlc.mplstyle', '/etc/skibidi/chart-font.otf', (metrics_push_textfile | dirname) ~ '/mpl'] }}"
+
+# 0700: the traffic file names every client
+- name: Make the directory the traffic file lives in
+  ansible.builtin.file:
+    path: "{{ metrics_push_textfile | dirname }}"
     state: directory
     owner: root
     group: root
     mode: "0700"
 
-- name: Install the report generator
+- name: Install the reporter
   ansible.builtin.copy:
     src: skibidi-report.py
     dest: /usr/local/sbin/skibidi-report
@@ -34,29 +67,7 @@
     group: root
     mode: "0755"
 
-# The theme rides the deploy: the dev shell exports the palette the flake is
-# locked to, and this carries it onto the master. Colours are not secrets, and
-# a deploy from outside the shell simply leaves the neutral defaults in place
-# Both halves of one theme, generated in one repo from one palette revision:
-# the mplstyle the charts apply verbatim (its series order carries the
-# colour-blindness guarantees) and the letter file whose colours, faces and
-# styles the HTML inlines. Recreating either here would be a copy that drifts
-- name: Carry the theme the flake is locked to
-  ansible.builtin.copy:
-    src: "{{ lookup('env', item.env) }}"
-    dest: "{{ item.dest }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop:
-    - { env: SKIBIDI_MPLSTYLE, dest: /etc/skibidi/ddlc.mplstyle }
-    - { env: SKIBIDI_MAIL, dest: /etc/skibidi/ddlc-mail.json }
-    - { env: SKIBIDI_CHART_FONT, dest: /etc/skibidi/chart-font.otf }
-  when: lookup('env', item.env) | length > 0
-
-# 0600: the node addresses in here are the private registry's, and the whole
-# point of that registry is that they appear nowhere public
-- name: Write the report configuration
+- name: Write the reporter's configuration
   ansible.builtin.template:
     src: report.toml.j2
     dest: /etc/skibidi/report.toml
@@ -64,19 +75,10 @@
     group: root
     mode: "0600"
 
-# The one proof the roles cannot fake: probe runs the letter's own pull_node —
-# same port, same path, same configured address. This catches a chain broken
-# between two working ends (a socket bound where the master cannot reach, a
-# sandbox that cannot open the store), which no single-node check can see, and
-# it cannot drift from the letter because it is the letter's code
-- name: Prove each node answers the pull the way the letter will ask
-  ansible.builtin.command:
-    argv: [/usr/local/sbin/skibidi-report, probe]
-  register: reporter_pull_probe
-  changed_when: false
-  when: not ansible_check_mode
-
-- name: Install the units
+# Only where the node names a station, like the push target they read. A
+# master that names none has no dashboard to feed, and a timer that writes a
+# file nobody reads would be a job for nothing
+- name: Install the units that write the panel's traffic
   ansible.builtin.template:
     src: "{{ item }}.j2"
     dest: /etc/systemd/system/{{ item }}
@@ -84,51 +86,56 @@
     group: root
     mode: "0644"
   loop:
-    - skibidi-snapshot.service
-    - skibidi-snapshot.timer
-    - skibidi-report.service
-    - skibidi-report.timer
+    - skibidi-traffic.service
+    - skibidi-traffic.timer
   notify: Reload systemd
+  when: backup_url | default('') | length > 0
 
-- name: Apply the unit changes before enabling the timers
+- name: Look for a traffic timer an earlier deploy installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/skibidi-traffic.timer
+  register: reporter_traffic_timer
+  when: backup_url | default('') | length == 0
+
+- name: Stop the traffic timer of a master that names no station
+  ansible.builtin.systemd_service:
+    name: skibidi-traffic.timer
+    state: stopped
+    enabled: false
+  when:
+    - backup_url | default('') | length == 0
+    - reporter_traffic_timer.stat.exists
+    - not ansible_check_mode
+
+- name: Remove the traffic units of a master that names no station
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ item }}
+    state: absent
+  loop:
+    - skibidi-traffic.service
+    - skibidi-traffic.timer
+  notify: Reload systemd
+  when: backup_url | default('') | length == 0
+
+- name: Apply the unit changes before enabling the timer
   ansible.builtin.meta: flush_handlers
 
-# Skipped in check mode: the units it enables are written by this same play,
-# and a dry run deliberately does not write them
-- name: Enable the timers
+# Skipped in check mode: the unit it enables is written by this same play, and
+# a dry run deliberately does not write it
+- name: Enable the traffic timer
   ansible.builtin.systemd_service:
-    name: "{{ item }}"
+    name: skibidi-traffic.timer
     enabled: true
     state: started
-  loop:
-    - skibidi-snapshot.timer
-    - skibidi-report.timer
-  when: not ansible_check_mode
+  when:
+    - backup_url | default('') | length > 0
+    - not ansible_check_mode
 
-# The first snapshot lands now, in front of someone: it proves the database
-# opens read-only, its columns are the ones this release reads, and the
-# sanitiser writes — the three things the Monday diff will silently lack
-# otherwise
-- name: Take the first snapshot, now
+# The daily check runs this on the master every morning, and the traffic timer
+# runs the other command. A panel release that moves a column fails here, in
+# front of someone, and not as a daily mail that never comes
+- name: Prove the panel's open items can be listed
   ansible.builtin.command:
-    argv: [/usr/local/sbin/skibidi-report, snapshot]
+    argv: [/usr/local/sbin/skibidi-report, problems]
   changed_when: false
-  when: not ansible_check_mode
-
-# Builds the entire letter — panel, metrics pulls, charts, both bodies — and
-# throws it away. A master is never deployed into a state where Monday's
-# letter would be its first full rehearsal
-- name: Prove the letter builds without sending it
-  ansible.builtin.command:
-    argv: [/usr/local/sbin/skibidi-report, send, --print]
-  register: reporter_rehearsal
-  changed_when: false
-  when: not ansible_check_mode
-
-- name: Fail the deploy if the letter does not build
-  ansible.builtin.assert:
-    that:
-      - reporter_rehearsal.rc == 0
-      - "'Subject: ' in reporter_rehearsal.stdout"
-    fail_msg: the report generator cannot build a letter on this master
   when: not ansible_check_mode
