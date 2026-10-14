@@ -37,6 +37,30 @@ BACKUP='roles/backup/templates/skibidi-backup.j2'
 BACKUP_SERVICE='roles/backup/templates/skibidi-backup.service.j2'
 BACKUP_DEFAULTS='roles/backup/defaults/main.yml'
 CHECK_DEFAULTS='roles/checker/defaults/main.yml'
+JAILS='roles/fail2ban/templates/jail.local.j2'
+FAIL2BAN_FACTS='roles/fail2ban/files/skibidi-fail2ban-facts.py'
+
+# fail2ban
+
+defect 'fail2ban/recidive-counts-clients' "$JAILS" \
+  'filter = recidive[_jailname="(?:recidive|3x-ipl)"]' \
+  '' \
+  'a client over the device limit three times in a day is banned for a week on every port'
+
+defect 'fail2ban/fleet-banned' "$JAILS" \
+  'ignoreip = {{ (fail2ban_ignoreip + fail2ban_fleet_addresses) | join('"' '"') }}' \
+  'ignoreip = {{ fail2ban_ignoreip | join('"' '"') }}' \
+  'one node can ban the chain from the next as an attacker or a client over its limit'
+
+defect 'fail2ban/attacker-lifted' "$FAIL2BAN_FACTS" \
+  '        if causes and causes <= client_jails:' \
+  '        if causes <= client_jails:' \
+  'an attacker whose sshd bans rotated out of the log is lifted from recidive'
+
+defect 'fail2ban/private-taken-for-public' "$FAIL2BAN_FACTS" \
+  'if address.is_unspecified or address.is_multicast or any(address in network for network in INTERNAL):' \
+  'if address.is_unspecified or address.is_multicast:' \
+  'a node behind NAT puts its private address in the fleet list and never asks the cloud'
 
 # The reporter
 

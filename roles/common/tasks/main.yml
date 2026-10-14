@@ -1,4 +1,14 @@
 ---
+# pam_systemd registers each login with logind. A minimal image without it
+# leaves user@0.service failed after every SSH login, and a failed unit is what
+# the checks and the station look for
+- name: Register every login session with systemd
+  ansible.builtin.apt:
+    name: libpam-systemd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Load kernel modules needed by the sysctl settings
   ansible.builtin.copy:
     dest: /etc/modules-load.d/skibidi-vpn.conf

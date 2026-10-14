@@ -97,6 +97,41 @@
   when: fail2ban_ipl_enabled
   notify: Restart fail2ban
 
+# Asked of every node in the inventory, not only those a --limit names,
+# because each node's ignoreip needs the whole fleet. The question reads and
+# changes nothing, and a node that does not answer is left out with a warning
+# rather than stopping the deploy of another
+- name: Ask every node of the fleet for its public address
+  ansible.builtin.script:
+    cmd: skibidi-fail2ban-facts.py public-address
+    executable: python3
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+  run_once: true
+  register: fail2ban_fleet_answers
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false
+
+- name: Keep the addresses the fleet gave
+  ansible.builtin.set_fact:
+    fail2ban_fleet_addresses: >-
+      {{ fail2ban_fleet_answers.results | selectattr('stdout', 'defined')
+         | map(attribute='stdout') | map('trim') | select | unique | list }}
+
+- name: Say which nodes gave no public address
+  ansible.builtin.debug:
+    msg: >-
+      no public address from {{ item.item }}, so this deploy does not keep it
+      out of the bans; it is either down or behind a NAT this role cannot see past
+  loop: "{{ fail2ban_fleet_answers.results | rejectattr('stdout', 'defined') | list
+            + fail2ban_fleet_answers.results | selectattr('stdout', 'defined')
+              | selectattr('stdout', 'equalto', '') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+  run_once: true
+
 - name: Declare the jails
   ansible.builtin.template:
     src: jail.local.j2
@@ -137,6 +172,31 @@
   loop: "{{ ['sshd'] + (['recidive'] if fail2ban_recidive_enabled else [])
             + (['3x-ipl'] if fail2ban_ipl_enabled else []) }}"
   when: not ansible_check_mode
+
+# A week-long recidive ban that only the panel's jail caused holds a client
+# who passed the device limit as an attacker. The jails above now run with a
+# recidive that skips those bans, so a lifted client is not banned again. An
+# address any other jail banned stays banned
+- name: Find the clients recidive holds for the device limit alone
+  ansible.builtin.script:
+    cmd: skibidi-fail2ban-facts.py client-only-bans 3x-ipl
+    executable: python3
+  register: fail2ban_client_bans
+  changed_when: false
+  when:
+    - fail2ban_recidive_enabled
+    - fail2ban_ipl_enabled
+    - not ansible_check_mode
+
+- name: Lift those bans
+  ansible.builtin.command:
+    argv: [fail2ban-client, set, recidive, unbanip, "{{ item }}"]
+  loop: "{{ fail2ban_client_bans.stdout_lines | default([]) }}"
+  changed_when: true
+  when:
+    - fail2ban_recidive_enabled
+    - fail2ban_ipl_enabled
+    - not ansible_check_mode
 
 # A loaded jail is not a jail reading its log. With a journal backend fail2ban
 # drops the jail's logpath silently and the jail watches the journal instead,

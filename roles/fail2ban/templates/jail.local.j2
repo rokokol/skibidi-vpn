@@ -14,8 +14,9 @@ backend = {{ fail2ban_backend }}
 
 # Never ban the tunnel: an administrator locked out of the panel has to reach
 # the node another way, and the tunnel is that way. The ranges are the same
-# declaration the metrics API admits, so the two cannot drift apart
-ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+# declaration the metrics API admits, so the two cannot drift apart. Never
+# ban a node of the fleet either, whose traffic to this one is a chain
+ignoreip = {{ (fail2ban_ignoreip + fail2ban_fleet_addresses) | join(' ') }}
 
 [sshd]
 enabled = true
@@ -34,6 +35,11 @@ logpath = /var/log/fail2ban.log
 findtime = {{ fail2ban_recidive_findtime }}
 bantime = {{ fail2ban_recidive_bantime }}
 maxretry = {{ fail2ban_recidive_maxretry }}
+{% if fail2ban_ipl_enabled %}
+# The stock filter skips recidive's own bans alone, so a client the panel's
+# jail banned three times in a day was held for a week as an attacker
+filter = recidive[_jailname="(?:recidive|3x-ipl)"]
+{% endif %}
 {% endif %}
 
 {% if fail2ban_ipl_enabled %}
