@@ -62,19 +62,19 @@ class TestRecidive(unittest.TestCase):
         self.assertEqual(lift["ansible.builtin.command"]["argv"][:4], ["fail2ban-client", "set", "recidive", "unbanip"])
         self.assertIn("fail2ban_client_bans.stdout_lines", lift["loop"])
         self.assertIn("fail2ban_address_pattern", lift["loop"])
+        # The jails have to be running with the new filter before a lifted
+        # client is safe from being banned again at once
+        self.assertGreater(names.index("Find the clients recidive holds for the device limit alone"),
+                           names.index("Apply pending restarts before asking what is running"))
 
     def test_a_warning_the_node_prints_is_never_taken_for_an_address(self):
         # The script module runs on a terminal, so stderr arrives in stdout
-        pattern = re.compile(defaults("fail2ban")["fail2ban_address_pattern"])
+        pattern = re.compile(defaults("metrics", "fail2ban")["fail2ban_address_pattern"])
         self.assertIsNone(pattern.match("sudo: unable to resolve host node-a: Name or service not known"))
         self.assertIsNotNone(pattern.match("198.51.100.7"))
         self.assertIsNotNone(pattern.match("2001:db8::7"))
         keep = [task for task in tasks("fail2ban") if task.get("name") == "Keep the addresses the fleet gave"]
         self.assertIn("fail2ban_address_pattern", keep[0]["ansible.builtin.set_fact"]["fail2ban_fleet_addresses"])
-        # The jails have to be running with the new filter before a lifted
-        # client is safe from being banned again at once
-        self.assertGreater(names.index("Find the clients recidive holds for the device limit alone"),
-                           names.index("Apply pending restarts before asking what is running"))
 
 
 if __name__ == "__main__":
