@@ -114,22 +114,24 @@
   ignore_unreachable: true
   check_mode: false
 
+# The script module runs on a terminal, so a warning the node prints on
+# stderr, such as sudo's about the hostname, arrives in stdout. Only a line
+# that is an address counts
 - name: Keep the addresses the fleet gave
   ansible.builtin.set_fact:
     fail2ban_fleet_addresses: >-
-      {{ fail2ban_fleet_answers.results | selectattr('stdout', 'defined')
-         | map(attribute='stdout') | map('trim') | select | unique | list }}
+      {{ fail2ban_fleet_answers.results | map(attribute='stdout_lines', default=[]) | flatten
+         | select('match', fail2ban_address_pattern) | unique | list }}
 
 - name: Say which nodes gave no public address
   ansible.builtin.debug:
     msg: >-
       no public address from {{ item.item }}, so this deploy does not keep it
       out of the bans; it is either down or behind a NAT this role cannot see past
-  loop: "{{ fail2ban_fleet_answers.results | rejectattr('stdout', 'defined') | list
-            + fail2ban_fleet_answers.results | selectattr('stdout', 'defined')
-              | selectattr('stdout', 'equalto', '') | list }}"
+  loop: "{{ fail2ban_fleet_answers.results }}"
   loop_control:
     label: "{{ item.item }}"
+  when: item.stdout_lines | default([]) | select('match', fail2ban_address_pattern) | list | length == 0
   run_once: true
 
 - name: Declare the jails
@@ -191,7 +193,7 @@
 - name: Lift those bans
   ansible.builtin.command:
     argv: [fail2ban-client, set, recidive, unbanip, "{{ item }}"]
-  loop: "{{ fail2ban_client_bans.stdout_lines | default([]) }}"
+  loop: "{{ fail2ban_client_bans.stdout_lines | default([]) | select('match', fail2ban_address_pattern) | list }}"
   changed_when: true
   when:
     - fail2ban_recidive_enabled

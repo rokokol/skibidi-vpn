@@ -16,6 +16,11 @@ fail2ban_ignoreip: "{{ ['127.0.0.1/8', '::1'] + metrics_tunnel_ranges }}"
 # to the next is never taken for an attacker or a client over its limit
 fail2ban_fleet_addresses: []
 
+# What a line of the role's own script must look like to count as an address.
+# The script module runs on a terminal, so a warning on stderr arrives as a
+# line of output too
+fail2ban_address_pattern: '^[0-9a-fA-F.:]+$'
+
 # SSH is the one door that is open to the whole internet on purpose: moving it
 # to a high port reads as hiding and works against the legend the node relies on
 fail2ban_sshd_maxretry: 5
