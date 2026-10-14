@@ -449,9 +449,9 @@ defect 'push/gateway-port' "$METRICS_DEFAULTS" \
   'every push goes to a port the station does not serve'
 
 defect 'traffic/timer-too-slow' "$REPORTER_DEFAULTS" \
-  'reporter_traffic_interval: 10min' \
-  'reporter_traffic_interval: 1h' \
-  "the master's traffic is older than the station tolerates"
+  'reporter_traffic_interval: 1min' \
+  'reporter_traffic_interval: 5min' \
+  "the dashboard's traffic lags the one-minute push by minutes"
 
 # The open items and the daily check
 
