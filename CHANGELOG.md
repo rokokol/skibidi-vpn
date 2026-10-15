@@ -40,7 +40,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Fixed
 
-- `fail2ban`: recidive counted the bans of the panel's `3x-ipl` jail, so a client who passed the device limit three times in a day was banned for a week on every port, as a repeat attacker. recidive now skips those bans as it skips its own, and a deploy lifts the recidive bans that no jail but `3x-ipl` caused. An address that any other jail banned stays banned
+- `fail2ban`: recidive counted the bans of the panel's `3x-ipl` jail, so a client who passed the device limit three times in a day was banned for a week on every port, as a repeat attacker. recidive now skips those bans as it skips its own. A week-long ban it issued before the fix stays until it expires or is lifted by hand
 - `fail2ban`: no node of the fleet is ever banned. A deploy asks every node in the inventory for its public address, the one on its interface or, behind a cloud's NAT, the one the cloud's metadata service names, and puts all of them into every node's `ignoreip`. A node that does not answer is left out with a warning
 - `common` installs `libpam-systemd`. Without it every SSH login left `user@0.service` failed
 - The `3x-ipl` and `recidive` jails were loaded and banning nobody: with `backend = systemd` inherited from `[DEFAULT]`, fail2ban drops a jail's `logpath` without a word and watches the journal instead, where neither the panel nor fail2ban itself ever writes. Both jails now say `backend = auto` — the line the panel's own jail file carries — and the role, the checker and the VM test ask fail2ban which file each jail actually opened. The fallback filter matches the panel's current log line

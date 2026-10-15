@@ -52,11 +52,6 @@ defect 'fail2ban/fleet-banned' "$JAILS" \
   'ignoreip = {{ fail2ban_ignoreip | join('"' '"') }}' \
   'one node can ban the chain from the next as an attacker or a client over its limit'
 
-defect 'fail2ban/attacker-lifted' "$FAIL2BAN_FACTS" \
-  '        if causes and causes <= client_jails:' \
-  '        if causes <= client_jails:' \
-  'an attacker whose sshd bans rotated out of the log is lifted from recidive'
-
 defect 'fail2ban/private-taken-for-public' "$FAIL2BAN_FACTS" \
   'if address.is_unspecified or address.is_multicast or any(address in network for network in INTERNAL):' \
   'if address.is_unspecified or address.is_multicast:' \

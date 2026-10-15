@@ -1,5 +1,5 @@
 """The jails the fail2ban role writes: the fleet never bans itself, and a
-client over the device limit is never held for a week as a repeat offender."""
+client over the device limit is never banned for a week as a repeat offender."""
 
 from __future__ import annotations
 
@@ -52,20 +52,6 @@ class TestRecidive(unittest.TestCase):
 
     def test_without_the_client_jail_recidive_keeps_its_stock_filter(self):
         self.assertNotIn("filter", jails(fail2ban_ipl_enabled=False)["recidive"])
-
-    def test_the_week_long_bans_of_clients_are_lifted(self):
-        main = tasks("fail2ban")
-        names = [task.get("name") for task in main]
-        find = main[names.index("Find the clients recidive holds for the device limit alone")]
-        lift = main[names.index("Lift those bans")]
-        self.assertIn("client-only-bans 3x-ipl", find["ansible.builtin.script"]["cmd"])
-        self.assertEqual(lift["ansible.builtin.command"]["argv"][:4], ["fail2ban-client", "set", "recidive", "unbanip"])
-        self.assertIn("fail2ban_client_bans.stdout_lines", lift["loop"])
-        self.assertIn("fail2ban_address_pattern", lift["loop"])
-        # The jails have to be running with the new filter before a lifted
-        # client is safe from being banned again at once
-        self.assertGreater(names.index("Find the clients recidive holds for the device limit alone"),
-                           names.index("Apply pending restarts before asking what is running"))
 
     def test_a_warning_the_node_prints_is_never_taken_for_an_address(self):
         # The script module runs on a terminal, so stderr arrives in stdout

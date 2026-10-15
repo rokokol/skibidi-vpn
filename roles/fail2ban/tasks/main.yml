@@ -175,31 +175,6 @@
             + (['3x-ipl'] if fail2ban_ipl_enabled else []) }}"
   when: not ansible_check_mode
 
-# A week-long recidive ban that only the panel's jail caused holds a client
-# who passed the device limit as an attacker. The jails above now run with a
-# recidive that skips those bans, so a lifted client is not banned again. An
-# address any other jail banned stays banned
-- name: Find the clients recidive holds for the device limit alone
-  ansible.builtin.script:
-    cmd: skibidi-fail2ban-facts.py client-only-bans 3x-ipl
-    executable: python3
-  register: fail2ban_client_bans
-  changed_when: false
-  when:
-    - fail2ban_recidive_enabled
-    - fail2ban_ipl_enabled
-    - not ansible_check_mode
-
-- name: Lift those bans
-  ansible.builtin.command:
-    argv: [fail2ban-client, set, recidive, unbanip, "{{ item }}"]
-  loop: "{{ fail2ban_client_bans.stdout_lines | default([]) | select('match', fail2ban_address_pattern) | list }}"
-  changed_when: true
-  when:
-    - fail2ban_recidive_enabled
-    - fail2ban_ipl_enabled
-    - not ansible_check_mode
-
 # A loaded jail is not a jail reading its log. With a journal backend fail2ban
 # drops the jail's logpath silently and the jail watches the journal instead,
 # where the panel and fail2ban itself never write - the jail is green, its
