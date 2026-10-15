@@ -612,14 +612,14 @@
       register: verify_daily_failure
       changed_when: false
 
-    - name: A listing fails the unit, which hands it to the alert mail
+    - name: A run that cannot list still fails into the alert mail
       ansible.builtin.assert:
         that: verify_daily_failure.stdout == 'skibidi-alert@skibidi-daily.service'
         fail_msg: "{{ verify_daily_failure.stdout }}"
 
-    # The whole way to the mailer: the unit runs, fails because it listed, and
-    # the alert unit mails its journal. A sendmail ahead of the real one on
-    # systemd's path captures the message
+    # The whole way to the mailer: the unit runs, lists, mails the list from
+    # its own unit and ends without failing. A sendmail ahead of the real one
+    # on systemd's path captures the message
     - name: Point the alert at a recipient and a capturing sendmail
       ansible.builtin.copy:
         dest: "{{ item.dest }}"
@@ -632,10 +632,17 @@
         - { dest: /usr/local/sbin/sendmail, content: "#!/bin/sh\ncat > /var/tmp/skibidi-daily.eml\n", mode: "0755" }
       changed_when: false
 
-    - name: Run the daily unit, which fails by design
+    - name: Run the daily unit, which lists the planted failure
       ansible.builtin.command:
         argv: [systemctl, start, skibidi-daily.service]
       register: verify_daily_unit
+      changed_when: false
+      failed_when: false
+
+    - name: Ask whether the unit was left failed
+      ansible.builtin.command:
+        argv: [systemctl, is-failed, skibidi-daily.service]
+      register: verify_daily_failed
       changed_when: false
       failed_when: false
 
@@ -649,12 +656,14 @@
         src: /var/tmp/skibidi-daily.eml
       register: verify_daily_mail
 
-    - name: The mail lists the open item and counts it in the subject
+    - name: The mail lists the open item as open, and the unit is not failed
       ansible.builtin.assert:
         that:
-          - verify_daily_unit.rc != 0
+          - verify_daily_unit.rc == 0
+          - verify_daily_failed.rc != 0
           - "'unresolved item(s)' in (verify_daily_mail.content | b64decode)"
           - "'planted failure for the verifier' in (verify_daily_mail.content | b64decode)"
+          - "'lists open items' in (verify_daily_mail.content | b64decode)"
         fail_msg: "{{ verify_daily_mail.content | b64decode | truncate(600) }}"
 
     # --- a failed check: the station first, the mail as the fallback -----------

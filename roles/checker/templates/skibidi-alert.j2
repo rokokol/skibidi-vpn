@@ -9,6 +9,17 @@ set -uo pipefail
 
 unit=${1:-unknown}
 
+# "open" is a run that worked and found something still open, the daily list,
+# which sends it from its own unit rather than by failing. Anything else is a
+# unit that failed
+if [ "${2:-}" = open ]; then
+    what="lists open items"
+    html_state=(--open)
+else
+    what=failed
+    html_state=()
+fi
+
 # A failed self-check goes to the station first. Its record is written before
 # the check exits, so one push tells the station every open problem within
 # seconds, and the station alerts by its own relay, which does not depend on the
@@ -39,7 +50,7 @@ fi
 # The last non-blank line is the summary the check prints deliberately, which
 # makes a phone notification useful without opening the mail
 subject=$(printf '%s\n' "$body" | grep -v '^\s*$' | tail -1)
-[ -n "$subject" ] || subject="$unit failed"
+[ -n "$subject" ] || subject="$unit $what"
 
 # The themed letter is rendered fully before sendmail sees a byte, so a
 # renderer that dies mid-way cannot mail a truncated message - and any failure
@@ -49,7 +60,7 @@ if [ -x /usr/local/sbin/skibidi-alert-html ]; then
     if printf '%s\n' "$body" | /usr/local/sbin/skibidi-alert-html \
         --unit "$unit" --host "$(hostname)" \
         --subject "[$(hostname)] $subject" --to "$to" \
-        --sender "skibidi-vpn@$(hostname -f 2>/dev/null || hostname)" \
+        --sender "skibidi-vpn@$(hostname -f 2>/dev/null || hostname)" "${html_state[@]}" \
         > "$rendered" 2>/dev/null && sendmail -t < "$rendered"; then
         rm -f "$rendered"
         exit 0
@@ -67,7 +78,7 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=utf-8
 Content-Transfer-Encoding: 8bit
 
-$unit failed on $(hostname) at $(date -Is).
+$unit $what on $(hostname) at $(date -Is).
 
 $body
 MAIL

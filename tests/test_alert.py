@@ -50,14 +50,14 @@ def theme_file(theme=THEME):
     return str(path)
 
 
-def build(theme_path="/nonexistent/ddlc-mail.json"):
+def build(theme_path="/nonexistent/ddlc-mail.json", open_items=False):
     import email
     import email.policy
 
     message = alert.build_message(
         BODY, "skibidi-check.service", "test-node",
         "[test-node] 1 check(s) failed on test-node",
-        "vpn@example.org", "skibidi-vpn@test-node", theme_path,
+        "vpn@example.org", "skibidi-vpn@test-node", theme_path, open_items=open_items,
     )
     # Through bytes and back, because sendmail sees bytes, not the object
     return email.message_from_bytes(message.as_bytes(), policy=email.policy.default)
@@ -110,6 +110,15 @@ class TestAlertMessage(unittest.TestCase):
     def test_the_failed_box_wears_the_theme_s_pop_up(self):
         body = html_part(build(theme_path=theme_file()))
         self.assertIn(THEME["styles"]["inform"], body)
+
+    def test_a_list_of_open_items_does_not_read_as_a_failure(self):
+        # The daily list ran fine and found something open; "failed" in its
+        # heading would read as the check itself breaking
+        body = html_part(build(open_items=True))
+        self.assertIn("skibidi-check.service lists open items</h1>", body)
+        self.assertNotIn("failed</h1>", body)
+        self.assertIn(">Open<", body)
+        self.assertIn("skibidi-check.service failed</h1>", html_part(build()))
 
 
 class TestClassification(unittest.TestCase):

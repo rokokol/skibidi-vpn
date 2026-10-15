@@ -1,8 +1,8 @@
 # {{ ansible_managed }}
 [Unit]
 Description=List what is still open on this node
-# The run fails when it lists anything, so the alert unit that mails a failed
-# check mails this list too. A run that lists nothing mails nothing
+# A run that cannot list at all fails, and the alert unit mails its journal as
+# it does for any failed check
 OnFailure=skibidi-alert@%N.service
 StartLimitIntervalSec=0
 
@@ -10,3 +10,8 @@ StartLimitIntervalSec=0
 Type=oneshot
 ExecStart=/usr/local/sbin/skibidi-daily
 EnvironmentFile={{ checker_daily_env_file }}
+# Exit 1 is a run that worked and found something open. It is not a failure,
+# so it leaves no failed unit behind, and the list is mailed from here. An
+# alert that cannot mail fails the unit, and the failure is mailed instead
+SuccessExitStatus=1
+ExecStopPost=/bin/sh -c 'if [ "$$EXIT_STATUS" = 1 ]; then exec /usr/local/sbin/skibidi-alert %n open; fi'

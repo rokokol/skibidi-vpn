@@ -90,10 +90,11 @@ def classify(line: str) -> str:
     return "meta"
 
 
-def render_html(body: str, unit: str, host: str, theme: dict) -> str:
+def render_html(body: str, unit: str, host: str, theme: dict, open_items: bool = False) -> str:
     """The theme's letter styles: prose on the ground colour, the heading
     underlined by the divider, the failures as the game's "Just Monika."
-    pop-up, and the journal on the code ground it belongs to."""
+    pop-up, and the journal on the code ground it belongs to. open_items is a
+    run that worked and found something still open, which is not a failure"""
     palette = load_palette(theme)
     style = styler(theme)
     lines = [line for line in body.splitlines() if line.strip()]
@@ -129,7 +130,7 @@ def render_html(body: str, unit: str, host: str, theme: dict) -> str:
         frame = "" if theme else f'border:2px solid {palette["warn"]};padding:12px'
         sections.append(
             f'<div style="{style("inform", frame)}">'
-            f'<div style="{style("inform-title")}">Failed</div>'
+            f'<div style="{style("inform-title")}">{"Open" if open_items else "Failed"}</div>'
             f'<ul style="{style("inform-list")}">{items}</ul></div>'
         )
     # The whole run folds away rather than scrolling forever; <details> is the
@@ -145,14 +146,14 @@ def render_html(body: str, unit: str, host: str, theme: dict) -> str:
     return (
         f'<div style="{style("page")}">'
         f'<div style="{style("column")}">'
-        f'<h1 style="{style("h1")}">{html.escape(unit)} failed</h1>'
+        f'<h1 style="{style("h1")}">{html.escape(unit)} {"lists open items" if open_items else "failed"}</h1>'
         f'<p style="{style("sub")}">on {html.escape(host)}</p>'
         + "".join(sections) + "</div></div>"
     )
 
 
 def build_message(body: str, unit: str, host: str, subject: str,
-                  to: str, sender: str, theme_path: str) -> EmailMessage:
+                  to: str, sender: str, theme_path: str, open_items: bool = False) -> EmailMessage:
     message = EmailMessage()
     message["To"] = to
     message["From"] = f"skibidi-vpn <{sender}>"
@@ -165,7 +166,7 @@ def build_message(body: str, unit: str, host: str, subject: str,
     # Russian remark from breaking the part
     message.set_content(body, charset="utf-8", cte="8bit")
     message.add_alternative(
-        render_html(body, unit, host, load_theme(theme_path)),
+        render_html(body, unit, host, load_theme(theme_path), open_items),
         subtype="html", charset="utf-8",
     )
     return message
@@ -180,11 +181,14 @@ def main() -> int:
     parser.add_argument("--sender", required=True)
     parser.add_argument("--theme", default=os.environ.get(
         "SKIBIDI_MAIL_FILE", "/etc/skibidi/ddlc-mail.json"))
+    parser.add_argument("--open", action="store_true", dest="open_items",
+                        help="the run worked and lists items still open")
     arguments = parser.parse_args()
 
     message = build_message(
         sys.stdin.read(), arguments.unit, arguments.host,
         arguments.subject, arguments.to, arguments.sender, arguments.theme,
+        arguments.open_items,
     )
     sys.stdout.buffer.write(message.as_bytes())
     return 0

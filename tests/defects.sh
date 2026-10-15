@@ -506,6 +506,16 @@ defect 'problems/disabled-client-listed' "$PROBLEMS" \
             continue' \
   'a client switched off on purpose is listed every morning'
 
+defect 'daily/listing-fails-unit' "$DAILY_SERVICE" \
+  'SuccessExitStatus=1' \
+  'SuccessExitStatus=0' \
+  'every morning with an open item leaves a failed unit that reads as a broken check'
+
+defect 'daily/open-reads-as-failed' "$ALERT_SCRIPT" \
+  '    what="lists open items"' \
+  '    what=failed' \
+  'the daily list says its check failed when it ran fine'
+
 defect 'daily/stale-record-trusted' "$PROBLEMS" \
   '    if age > max_age_hours * 3600:' \
   '    if False:' \

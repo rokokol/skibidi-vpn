@@ -170,11 +170,21 @@ class TestDailyCheckUnits(unittest.TestCase):
         timer = unit(render("checker", "skibidi-daily.timer.j2", values))["Timer"]
         self.assertEqual(timer["OnCalendar"], "*-*-* 07:00:00 Europe/Berlin")
 
-    def test_a_listing_fails_the_unit_so_the_alert_path_mails_it(self):
+    def test_a_listing_is_mailed_without_failing_the_unit(self):
+        # Exit 1 means the run found something open, which is not a broken
+        # check, so it neither leaves a failed unit nor reads as one
         service = unit(render("checker", "skibidi-daily.service.j2", self.values))
-        self.assertEqual(service["Unit"]["OnFailure"], "skibidi-alert@%N.service")
         self.assertEqual(service["Service"]["Type"], "oneshot")
         self.assertTrue(service["Service"]["ExecStart"].endswith("skibidi-daily"))
+        self.assertIn("1", service["Service"]["SuccessExitStatus"].split())
+        post = service["Service"]["ExecStopPost"]
+        # $$ is systemd's escape, which hands the shell its own variable
+        self.assertIn('"$$EXIT_STATUS" = 1', post)
+        self.assertIn("/usr/local/sbin/skibidi-alert %n open", post)
+
+    def test_a_check_that_breaks_still_fails_and_is_mailed(self):
+        service = unit(render("checker", "skibidi-daily.service.j2", self.values))
+        self.assertEqual(service["Unit"]["OnFailure"], "skibidi-alert@%N.service")
 
     def settings(self):
         return env_file(render("checker", "skibidi-daily.env.j2", self.values))

@@ -44,7 +44,7 @@ class AlertCase(unittest.TestCase):
         path.write_text(f"#!/bin/sh\n{body}\n")
         path.chmod(0o755)
 
-    def run_alert(self, unit, push_rc=0, recipient=True):
+    def run_alert(self, unit, push_rc=0, recipient=True, state=None):
         push = self.dir / "push-command"
         push.write_text(f"#!/bin/sh\necho called >> {self.pushes}\nexit {push_rc}\n")
         push.chmod(0o755)
@@ -57,8 +57,8 @@ class AlertCase(unittest.TestCase):
         if not recipient:
             self.recipient.unlink()
         env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}"}
-        done = subprocess.run(["bash", str(self.script), unit], capture_output=True, text=True,
-                              env=env, check=False)
+        done = subprocess.run(["bash", str(self.script), unit, *([state] if state else [])],
+                              capture_output=True, text=True, env=env, check=False)
         self.assertEqual(done.returncode, 0, done.stderr)
         return done
 
@@ -106,6 +106,15 @@ class TestOtherUnitsStillMail(AlertCase):
         self.run_alert("skibidi-daily")
         self.assertFalse(self.pushed())
         self.assertTrue(self.mailed())
+
+    def test_a_list_of_open_items_is_mailed_as_open_not_failed(self):
+        # The daily list's unit no longer fails when it lists something, so
+        # its letter must not say it did
+        self.run_alert("skibidi-daily.service", state="open")
+        self.assertFalse(self.pushed())
+        text = self.mail.read_text()
+        self.assertIn("lists open items", text)
+        self.assertNotIn("skibidi-daily.service failed", text)
 
     def test_a_failed_backup_is_mailed_not_pushed(self):
         self.run_alert("skibidi-backup")

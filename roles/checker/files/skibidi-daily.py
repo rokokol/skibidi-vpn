@@ -4,9 +4,10 @@
 The second level of the two. `skibidi-check` fails within half an hour for
 what must work now and mails at once. This runs once a day and puts into one
 mail every item still open, urgent or not, and it mails nothing when nothing
-is open. It does that by failing its own unit when it lists anything: the
-alert unit that mails a failed `skibidi-check` mails this one the same way,
-with the journal of the run, and its last line is the subject.
+is open. Exit 1 is that answer, not a failure: its unit counts it as success
+and mails the run's journal through the same alert script a failed check
+uses, worded as open items, and its last line is the subject. A run that
+cannot list at all fails its unit, and that failure is mailed instead.
 
 An item that stays open comes again the next day, because this keeps no state
 between runs. Where an item is defined:
