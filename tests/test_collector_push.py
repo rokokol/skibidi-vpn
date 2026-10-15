@@ -307,7 +307,6 @@ class TestAttackers(PushCase):
         super().setUp()
         self.log = self.dir / "fail2ban.log"
         os.environ["SKIBIDI_FAIL2BAN_LOG"] = str(self.log)
-        os.environ["SKIBIDI_ATTACK_JAILS"] = "sshd"
         self.rows = [("load1", "", 0.5)]
         self.now = time.time()
 
@@ -321,10 +320,11 @@ class TestAttackers(PushCase):
     def write(self, path, lines):
         path.write_text("".join(lines))
 
-    def attempts(self):
+    def attempts(self, jail="sshd"):
         families = self.pushed()
         return {labels["ip"]: value
-                for labels, value in families.get("vpn_fail2ban_top_attempts", {"samples": []})["samples"]}
+                for labels, value in families.get("vpn_fail2ban_top_attempts", {"samples": []})["samples"]
+                if labels["jail"] == jail}
 
     def bans(self):
         families = self.pushed()
@@ -343,16 +343,19 @@ class TestAttackers(PushCase):
         self.collect()
         self.assertEqual(self.attempts(), {"192.0.2.2": 1.0})
 
-    def test_a_jail_that_is_not_an_attack_is_left_out(self):
-        # 3x-ipl bans the operator's own clients, and recidive's findings are
-        # bans of other jails, not attempts
+    def test_every_jail_counts_under_its_own_name(self):
+        # The dashboard shows every reason a node turns an address away, and
+        # the jail says which: 3x-ipl's are the owner's clients over their
+        # limit, and recidive's findings are the bans of other jails
         self.write(self.log, [self.line(60, "3x-ipl", "Found", "198.51.100.7"),
                               self.line(60, "recidive", "Found", "192.0.2.1"),
                               self.line(60, "3x-ipl", "Ban", "198.51.100.7"),
                               self.line(60, "sshd", "Found", "192.0.2.1")])
         self.collect()
-        self.assertEqual(self.attempts(), {"192.0.2.1": 1.0})
-        self.assertEqual(self.bans(), [])
+        self.assertEqual(self.attempts("sshd"), {"192.0.2.1": 1.0})
+        self.assertEqual(self.attempts("3x-ipl"), {"198.51.100.7": 1.0})
+        self.assertEqual(self.attempts("recidive"), {"192.0.2.1": 1.0})
+        self.assertEqual([(labels["jail"], labels["ip"]) for labels, _ in self.bans()], [("3x-ipl", "198.51.100.7")])
 
     def test_only_the_busiest_ten_are_pushed(self):
         lines = []

@@ -372,10 +372,10 @@ defect 'push/oldest-wins' "$PUSH" \
   'if key not in newest or ts <= newest[key][0]:' \
   'the dashboard shows the oldest sample of the window as the current one'
 
-defect 'attackers/any-jail' "$METRICS" \
-  '            if jail not in jails:' \
-  '            if False:' \
-  "the operator's own clients, banned for their device count, show up as attackers"
+defect 'attackers/jail-unnamed' "$METRICS" \
+  'attempts[(jail, address)] = attempts.get((jail, address), 0) + 1' \
+  'attempts[("sshd", address)] = attempts.get(("sshd", address), 0) + 1' \
+  "the operator's own clients over their device limit read as SSH attackers"
 
 defect 'attackers/no-day-limit' "$METRICS" \
   'if match and stamp is not None and stamp >= cutoff:' \

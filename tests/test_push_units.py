@@ -307,12 +307,6 @@ class TestPushUnits(unittest.TestCase):
     def test_the_push_is_told_where_the_attacks_are(self):
         pushed = env_file(render("metrics", "push.env.j2", dict(self.values, backup_url="http://100.64.0.2:8000")))
         self.assertEqual(pushed["SKIBIDI_FAIL2BAN_LOG"], self.values["metrics_fail2ban_log"])
-        jails = pushed["SKIBIDI_ATTACK_JAILS"].split()
-        self.assertIn("sshd", jails)
-        # The panel's jail bans the operator's own clients, and recidive's
-        # findings are other jails' bans
-        self.assertNotIn("3x-ipl", jails)
-        self.assertNotIn("recidive", jails)
 
 
 class TestTheLetterIsGone(unittest.TestCase):

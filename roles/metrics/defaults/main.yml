@@ -28,12 +28,9 @@ metrics_push_textfile: /var/lib/skibidi-report/traffic.prom
 # no row to it, so a short interval costs the store nothing
 metrics_push_interval: 1min
 
-# fail2ban's own log, and the jails whose findings are attacks. The push names
-# the busiest addresses of the day and the latest bans in them. A jail that
-# bans the operator's own clients for their device count, or recidive, whose
-# findings are the bans of other jails, does not belong here
+# fail2ban's own log. The push names the busiest addresses of the day and the
+# latest bans, in every jail and under its name
 metrics_fail2ban_log: /var/log/fail2ban.log
-metrics_attack_jails: [sshd]
 
 # Where the push target is written for the units that push. It holds no
 # secret: the password stays in the backup role's root-only file

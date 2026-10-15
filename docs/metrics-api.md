@@ -108,14 +108,14 @@ The firewall drops are counted per interval in the store. The push turns them in
 
 ### Who knocks
 
-The push reads fail2ban's own log, `metrics_fail2ban_log`, back to a day before the push, in the jails `metrics_attack_jails` names. Those are the jails that face attackers: the panel's address-limit jail bans the owner's own clients, and the findings of recidive are the bans of other jails. A push names a few addresses only, because each address is a series of its own at the station
+The push reads fail2ban's own log, `metrics_fail2ban_log`, back to a day before the push, in every jail. The `jail` label says what a row is: the panel's address-limit jail finds the owner's own clients over their device limit, and the findings of recidive are the bans of other jails. A push names a few addresses only, because each address is a series of its own at the station
 
 | Metric | Type | Labels |
 | --- | --- | --- |
-| `vpn_fail2ban_top_attempts` | gauge | `ip` |
+| `vpn_fail2ban_top_attempts` | gauge | `jail`, `ip` |
 | `vpn_fail2ban_recent_ban_timestamp_seconds` | gauge | `jail`, `ip` |
 
-`vpn_fail2ban_top_attempts` is the number of failed attempts in the last day of each of the ten addresses that tried most. `vpn_fail2ban_recent_ban_timestamp_seconds` is the time of each of the ten latest bans in the last day, and an address banned twice is one series at its latest ban. A ban that fail2ban restores after a restart is not a new ban. A node without the log, or with no attempt in the day, pushes neither family
+`vpn_fail2ban_top_attempts` is the number of findings in the last day of each of the ten addresses that a jail found most, one series for each jail and address. `vpn_fail2ban_recent_ban_timestamp_seconds` is the time of each of the ten latest bans in the last day, and an address one jail banned twice is one series at its latest ban. A ban that fail2ban restores after a restart is not a new ban. A node without the log, or with no attempt in the day, pushes neither family
 
 ### What the master adds
 

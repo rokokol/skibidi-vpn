@@ -333,8 +333,8 @@ def traffic_text(environ, taken, now):
     return text
 
 
-# Who knocks: the attempts of the last day and the bans in it, read from
-# fail2ban's own log when the push runs. Only the busiest few addresses are
+# Who knocks: the findings of the last day and the bans in it, in every jail,
+# read from fail2ban's own log when the push runs. Only the busiest few addresses are
 # pushed, because every address is a series of its own at the station
 ATTACK_WINDOW_SECONDS = 86400
 ATTACK_TOP = 10
@@ -381,13 +381,12 @@ def log_since(path: Path, cutoff: float) -> list[tuple]:
 
 
 def attacker_families(environ, now):
-    """The busiest addresses of the day by attempts, and the latest bans, in
-    the jails that face attackers. A jail that bans the operator's own
-    clients, or one that reads fail2ban's own bans as its findings, would
-    count the wrong people, so the role names the jails"""
+    """The busiest addresses of the day by findings, and the latest bans, in
+    every jail and under its name. The jail says what a row is: the panel's
+    jail finds the owner's clients over their device limit, and recidive's
+    findings are the bans of other jails"""
     path = environ.get("SKIBIDI_FAIL2BAN_LOG")
-    jails = set(environ.get("SKIBIDI_ATTACK_JAILS", "").split())
-    if not path or not jails:
+    if not path:
         return []
     attempts: dict = {}
     bans: dict = {}
@@ -400,10 +399,8 @@ def attacker_families(environ, now):
             print(f"push: the fail2ban log is left out: {error}", file=sys.stderr)
             continue
         for stamp, jail, event, address in events:
-            if jail not in jails:
-                continue
             if event == "Found":
-                attempts[address] = attempts.get(address, 0) + 1
+                attempts[(jail, address)] = attempts.get((jail, address), 0) + 1
             else:
                 bans[(jail, address)] = max(bans.get((jail, address), 0.0), stamp)
     skibidi_push = push_library()
@@ -412,8 +409,8 @@ def attacker_families(environ, now):
         busiest = sorted(attempts.items(), key=lambda item: (-item[1], item[0]))[:ATTACK_TOP]
         families.append(skibidi_push.family(
             "vpn_fail2ban_top_attempts", "gauge",
-            "Failed attempts in the last day of the addresses that tried most",
-            [({"ip": address}, float(count)) for address, count in busiest],
+            "Findings in the last day of the addresses a jail found most",
+            [({"jail": jail, "ip": address}, float(count)) for (jail, address), count in busiest],
         ))
     if bans:
         latest = sorted(bans.items(), key=lambda item: -item[1])[:ATTACK_TOP]
