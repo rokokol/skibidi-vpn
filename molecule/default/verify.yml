@@ -69,6 +69,31 @@
             | list == common_dns_servers
         fail_msg: "resolver is {{ verify_resolv.content | b64decode | trim }}, a link: {{ verify_resolv_stat.stat.islnk }}"
 
+    - name: Ask whether the node resolves its own name
+      ansible.builtin.command:
+        argv: [getent, hosts, "{{ ansible_facts['hostname'] }}"]
+      changed_when: false
+
+    # The image's name on 127.0.1.1, the way a cloud image can leave it. The
+    # name must then fail to resolve, or the repair below proves nothing
+    - name: Put another name on 127.0.1.1
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\s'
+        line: "127.0.1.1 ubuntu"
+
+    - name: Ask whether the node still resolves its own name
+      ansible.builtin.command:
+        argv: [getent, hosts, "{{ ansible_facts['hostname'] }}"]
+      register: verify_unresolved
+      changed_when: false
+      failed_when: verify_unresolved.rc == 0
+
+    - name: Repair the name the way a deploy does
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: hosts
+
     - name: Read the listening sockets
       ansible.builtin.command: ss -ltnH
       register: verify_sockets

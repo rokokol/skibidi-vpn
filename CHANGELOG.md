@@ -37,6 +37,10 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - `tests/falsify.py`, a hand-written copy of the falsification engine that `t.sh falsify` already is. The defect list moved unchanged to `tests/defects.sh`, and `scripts/t.sh` with `scripts/markers/` is vendored from rokokol/tests-skill through `vendor-sync.sh`. A run now also reports a timeout and a declared exception by name
 - The SSH metrics export: the `skibidi-metrics` login account, its authorized key and forced-command guard, and the master's pull key pair. The first deploy removes all of them from a node, keeping the store; `skibidi-metrics` stays only as the group that may read it
 
+### Fixed
+
+- `common`: a node that cannot resolve its own name gets it on `127.0.1.1` in `/etc/hosts`, so sudo stops warning `unable to resolve host` on every call. A cloud image can leave its own name there. A node that already resolves its name keeps its file as it is, including a file that cloud-init writes again on every boot
+
 ## [1.0.1] - 2026-09-03
 
 ### Fixed

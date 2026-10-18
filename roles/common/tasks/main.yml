@@ -89,6 +89,9 @@
 - name: Declare the system resolver
   ansible.builtin.import_tasks: dns.yml
 
+- name: Let the node resolve its own name
+  ansible.builtin.import_tasks: hosts.yml
+
 - name: Make room for the panel's unit drop-in
   ansible.builtin.file:
     path: /etc/systemd/system/x-ui.service.d

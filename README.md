@@ -136,7 +136,7 @@ Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEV
 
 | Role | What it owns |
 | --- | --- |
-| `common` | congestion control, queue discipline, conntrack limits, one outgoing address family, the system resolver |
+| `common` | congestion control, queue discipline, conntrack limits, one outgoing address family, the system resolver, a node name that resolves |
 | `firewall` | ufw policy, the three public ports, and hiding the tunnel's direct path |
 | `tailscale` | the private network the panel is reachable on, and Tailscale SSH where a node opts in |
 | `xui` | the pinned panel, bound to the tunnel address, asserted afterwards |
