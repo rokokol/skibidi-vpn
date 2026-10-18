@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# The read-only commands of the observers. roles/observers/defaults/main.yml has the list
+{% for command in observers_commands %}
+{{ observers_users | join(',') }} ALL=(root) NOPASSWD: {{ command }}
+{% endfor %}

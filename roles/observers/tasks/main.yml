@@ -1,0 +1,86 @@
+---
+- name: Read the accounts on the node
+  ansible.builtin.getent:
+    database: passwd
+
+# A name taken out of the list keeps a login the tailnet policy may still let
+# in. Only the accounts that carry the role's mark are candidates, so an
+# account somebody made by hand survives
+- name: Remove the observers the node file no longer names
+  ansible.builtin.user:
+    name: "{{ item.key }}"
+    state: absent
+    remove: true
+  loop: >-
+    {{ ansible_facts.getent_passwd | dict2items
+       | selectattr('value.3', 'equalto', observers_comment)
+       | rejectattr('key', 'in', observers_users) | list }}
+  loop_control:
+    label: "{{ item.key }}"
+
+# The rules of observers an earlier deploy created would stay behind
+- name: Remove the observers' sudo rules from a node that names none
+  ansible.builtin.file:
+    path: "{{ observers_sudoers }}"
+    state: absent
+  when: observers_users | length == 0
+
+- name: Give the observers their accounts
+  when: observers_users | length > 0
+  block:
+    # A minimal Ubuntu image runs everything as root and ships no sudo
+    - name: Install sudo
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # No password: the way in is Tailscale SSH, which the tailnet policy
+    # authorises, and the public sshd accepts keys alone
+    - name: Create the observers
+      ansible.builtin.user:
+        name: "{{ item }}"
+        comment: "{{ observers_comment }}"
+        shell: /bin/bash
+        groups: "{{ observers_groups }}"
+        append: false
+        password_lock: true
+      loop: "{{ observers_users }}"
+
+    # visudo checks the file before it replaces the old one: a broken sudoers
+    # file locks root out of sudo as well
+    - name: Allow the observers their read-only commands
+      ansible.builtin.template:
+        src: sudoers.j2
+        dest: "{{ observers_sudoers }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Ask whether an observer can read a client secret
+      ansible.builtin.command:
+        argv: [runuser, -u, "{{ item.0 }}", --, test, -r, "{{ item.1 }}"]
+      loop: "{{ observers_users | product(observers_secret_paths) | list }}"
+      register: observers_secret_read
+      changed_when: false
+      failed_when: observers_secret_read.rc == 0
+      check_mode: false
+
+    # sudo -l with a command asks the policy and runs nothing
+    - name: Ask whether sudo grants each read-only command
+      ansible.builtin.command:
+        argv: "{{ ['runuser', '-u', item.0, '--', 'sudo', '-n', '-l'] + (item.1 | split) }}"
+      loop: "{{ observers_users | product(observers_commands) | list }}"
+      changed_when: false
+      check_mode: false
+
+    - name: Ask whether sudo refuses a command that changes the node
+      ansible.builtin.command:
+        argv: "{{ ['runuser', '-u', item, '--', 'sudo', '-n', '-l'] + (observers_refused_command | split) }}"
+      loop: "{{ observers_users }}"
+      register: observers_refused
+      changed_when: false
+      failed_when: observers_refused.rc == 0
+      check_mode: false

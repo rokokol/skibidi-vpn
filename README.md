@@ -144,6 +144,7 @@ Everything that reads as a workaround and is not one is in [`DEVIATIONS.md`](DEV
 | `certs` | a wildcard certificate over DNS-01, so only the wildcard reaches Certificate Transparency |
 | `nginx` | port 80, and the optional egress-address echo |
 | `fail2ban` | the sshd, recidive and panel address-limit jails, each proven to read the log it is meant to |
+| `observers` | optional local accounts that read the logs and run a few read-only commands as root, proven unable to read a client secret; off by default |
 | `metrics` | a ten-minute sampler of what the panel does not know, served read-only on the tailnet by the [metrics API](docs/metrics-api.md) and pushed to the station's dashboard, see [Dashboard](#dashboard) |
 | `reporter` | on the master: the open items only the panel knows, and the panel's traffic for the dashboard |
 | `backup` | the optional push of the panel's database and the metric store to a restic receiver the node names; off by default, see [Backup](#backup) |

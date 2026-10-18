@@ -47,6 +47,13 @@ metrics_host = "100.72.0.4"
 # tailnet, and every deploy that goes that way, is refused
 # tailscale_ssh = true
 
+# Optional: local accounts that read the journal and the logs and run the
+# observers role's read-only commands as root, such as an agent that diagnoses
+# the node. They have no password, so the way in is Tailscale SSH, and the
+# tailnet's ACL must let a device in as each of them. A name taken out of the
+# list loses its account on the next deploy
+# observers_users = ["observer"]
+
 # The common role points the system resolver at Quad9 and Cloudflare. A node that
 # must keep the resolver its cloud gave it, because foreign DNS does not reach
 # from where it sits, opts out here

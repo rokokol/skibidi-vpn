@@ -1007,3 +1007,69 @@
           - backup_init is not changed
           - "'the repository exists' in backup_init.stdout"
         fail_msg: "{{ backup_init.stdout | default('init did not run') }}"
+
+    # --- the observer -----------------------------------------------------------
+    #
+    # What the observer does as itself, rather than what sudo -l says it may: a
+    # rule that sudo accepts and a command that then fails look the same to -l
+
+    - name: Read the journal and fail2ban's log as the observer
+      ansible.builtin.command:
+        argv: [runuser, -u, observer, --, bash, -c, "journalctl -q -n 1 && head -n 1 /var/log/fail2ban.log"]
+      register: verify_observer_logs
+      changed_when: false
+
+    - name: The observer reads the logs
+      ansible.builtin.assert:
+        that:
+          - verify_observer_logs.stdout_lines | length == 2
+          - "'insufficient permissions' not in verify_observer_logs.stderr"
+        fail_msg: "{{ verify_observer_logs.stdout }} {{ verify_observer_logs.stderr }}"
+
+    - name: Ask fail2ban for its jails as the observer
+      ansible.builtin.command:
+        argv: [runuser, -u, observer, --, sudo, -n, /usr/bin/fail2ban-client, status]
+      register: verify_observer_jails
+      changed_when: false
+
+    - name: The observer gets an answer from fail2ban
+      ansible.builtin.assert:
+        that: "'Jail list' in verify_observer_jails.stdout"
+        fail_msg: "{{ verify_observer_jails.stdout }}"
+
+    # Each one exits non-zero when it is refused, and changes nothing that the
+    # rest of this scenario reads when it is not
+    - name: Try what an observer must not do
+      ansible.builtin.command:
+        argv: "{{ ['runuser', '-u', 'observer', '--'] + item }}"
+      loop:
+        - [cat, "{{ xui_db }}"]
+        - [cat, /usr/local/x-ui/bin/config.json]
+        - [sudo, -n, /usr/bin/true]
+        - [sudo, -n, /usr/bin/fail2ban-client, status, sshd]
+        - [sudo, -n, /usr/bin/ss, -tlnpu, -K]
+      register: verify_observer_refused
+      changed_when: false
+      failed_when: verify_observer_refused.rc == 0
+
+    - name: Take the observer out of the node's configuration
+      ansible.builtin.include_role:
+        name: observers
+      vars:
+        observers_users: []
+
+    - name: Look for the observer and its rules
+      ansible.builtin.shell:
+        cmd: "getent passwd observer; ls /etc/sudoers.d/skibidi-observers /home/observer 2>/dev/null; true"
+      register: verify_observer_left
+      changed_when: false
+
+    - name: Nothing of the observer is left
+      ansible.builtin.assert:
+        that: verify_observer_left.stdout | length == 0
+        fail_msg: "{{ verify_observer_left.stdout }}"
+
+    # And back, so the scenario can be verified again without a converge
+    - name: Name the observer again
+      ansible.builtin.include_role:
+        name: observers

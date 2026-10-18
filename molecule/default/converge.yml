@@ -177,6 +177,7 @@
     - xui
     - geodata
     - fail2ban
+    - observers
     - nginx
     - metrics
     - reporter

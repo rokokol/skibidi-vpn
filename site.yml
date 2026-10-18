@@ -13,6 +13,10 @@
     # before the checker, which watches the timer this role installs
     - geodata
     - fail2ban
+    # After the panel, whose secrets it proves an observer cannot read, and
+    # after fail2ban and the firewall, whose commands it lets an observer run.
+    # Not gated: a node that names no observer runs it to remove the old ones
+    - observers
     - role: certs
       when: certs_domain | default('') | length > 0
     - nginx

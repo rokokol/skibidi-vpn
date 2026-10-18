@@ -63,6 +63,8 @@ provisioner:
         # are tested for real. The address is inside the tunnel ranges
         metrics_api_interface: skibidi0
         metrics_host: "100.64.0.1"
+        # One observer, so the verifier can log in as it and be refused
+        observers_users: [observer]
         # The station is a real rest-server inside the VM, append-only with
         # private repositories, started by converge on a second dummy
         # interface. Its address is inside the tunnel ranges, so the script's

@@ -1,0 +1,35 @@
+---
+# Local accounts that may read the node and change nothing, such as an agent
+# that diagnoses the fleet. A node file sets observers_users = ["name"]. Empty
+# creates nobody and removes every observer an earlier deploy created
+observers_users: []
+
+# The journal and the logs under /var/log, fail2ban's own among them. The
+# panel keeps its store, its log and the Xray config owner-only, so neither
+# group reaches a client secret
+observers_groups: [systemd-journal, adm]
+
+# The mark that tells an observer from any other account, so that a name taken
+# out of the list is removed and an account the role never made is left alone
+observers_comment: skibidi observer
+
+observers_sudoers: /etc/sudoers.d/skibidi-observers
+
+# The only commands an observer may run as root. Each one is an exact argv:
+# sudo refuses any other arguments to a command listed with its arguments, so a
+# pattern never appears here. Every one of them reads and none of them changes
+observers_commands:
+  - /usr/bin/fail2ban-client status
+  - /usr/bin/fail2ban-client banned
+  - /usr/bin/ss -tlnpu
+  - /usr/sbin/nft list ruleset
+
+# Files that hold client secrets: the panel's store with every UUID and
+# subscription id, and the config Xray runs with its Reality private keys. The
+# deploy fails when an observer can read one of them
+observers_secret_paths:
+  - "{{ xui_db | default('/etc/x-ui/x-ui.db') }}"
+  - "{{ geodata_live_config | default('/usr/local/x-ui/bin/config.json') }}"
+
+# A command that changes the node, which an observer must not be allowed to run
+observers_refused_command: /usr/bin/systemctl restart x-ui
