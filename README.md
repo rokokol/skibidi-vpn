@@ -54,6 +54,8 @@ A node that names a station pushes a restic snapshot to it on a timer:
 
 - a copy of the panel's database and of the metric store, each taken with `sqlite3 .backup` into a directory only root can read, and checked for integrity before it leaves
 
+After a push that succeeded, the node runs `restic forget --prune` and keeps the newest snapshot of each of the last `backup_keep_daily` days, `backup_keep_weekly` weeks and `backup_keep_monthly` months, which default to 7, 4 and 6. A node file can set any of the three; 0 turns that kind off, and all three at 0 stops the deploy. A failed push prunes nothing, and a failed prune fails the run and raises the fleet alert
+
 The certificate in `/root/cert` and acme.sh's home `/root/.acme.sh` are not backed up: a rebuilt node issues a new wildcard over DNS-01 with the token from the vault, and a copy would put the wildcard's private key on one more machine. The Tailscale identity is not backed up either: a restored copy would collide with the original node on the tailnet, while a rebuilt node joins again with the auth key
 
 ### The receiver
@@ -61,7 +63,7 @@ The certificate in `/root/cert` and acme.sh's home `/root/.acme.sh` are not back
 A [rest-server](https://github.com/restic/rest-server) that the node can reach, set up like this:
 
 - one htpasswd account per node, kept to its own repository by `--private-repos`, so the repository path is the account name
-- `--append-only`, so a node can add snapshots and never remove one. Nothing on the node prunes; retention is the receiver's business
+- no `--append-only`: each node prunes its own repository, because the receiver never holds the repository password and cannot read what it stores. A receiver that wants protection from a malicious delete keeps its own read-only copies of the repositories, such as btrfs snapshots
 - plain HTTP only inside the tunnel ranges, where WireGuard already encrypts. Anywhere else the URL must be `https://`, which is accepted wherever the receiver is
 
 The repository is encrypted with a password that the node and the owner know and the receiver does not. Keep a copy of it away from the fleet: no snapshot can be read without it
