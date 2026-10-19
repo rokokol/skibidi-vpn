@@ -10,6 +10,19 @@
       {{ inventory_hostname }} names a backup station, but vault.yml has no
       backup_secrets.{{ inventory_hostname }} with rest_password and repository_password
 
+# restic forget with no --keep flag forgets nothing, so a policy of zeros, or a
+# word where a count belongs, would pass every night and never prune
+- name: Fail when the retention keeps nothing or is not a count
+  ansible.builtin.assert:
+    that:
+      - backup_keep_daily is integer and backup_keep_daily >= 0
+      - backup_keep_weekly is integer and backup_keep_weekly >= 0
+      - backup_keep_monthly is integer and backup_keep_monthly >= 0
+      - backup_keep_daily + backup_keep_weekly + backup_keep_monthly > 0
+    fail_msg: >-
+      backup_keep_daily, backup_keep_weekly and backup_keep_monthly must be
+      whole numbers from 0, and at least one must be above 0
+
 - name: Install what the backup copies and unpacks with
   ansible.builtin.apt:
     name: [bzip2, python3, sqlite3]

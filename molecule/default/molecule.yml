@@ -65,11 +65,16 @@ provisioner:
         metrics_host: "100.64.0.1"
         # One observer, so the verifier can log in as it and be refused
         observers_users: [observer]
-        # The station is a real rest-server inside the VM, append-only with
-        # private repositories, started by converge on a second dummy
-        # interface. Its address is inside the tunnel ranges, so the script's
-        # guard and the checker accept plain HTTP to it, as on the tailnet
+        # The station is a real rest-server inside the VM with private
+        # repositories, started by converge on a second dummy interface. Its
+        # address is inside the tunnel ranges, so the script's guard and the
+        # checker accept plain HTTP to it, as on the tailnet
         station_address: "100.64.0.2"
+        # One snapshot of each kind, so the verifier can count what a push
+        # leaves behind: every push of one day shares the one daily slot
+        backup_keep_daily: 1
+        backup_keep_weekly: 1
+        backup_keep_monthly: 1
         backup_url: "http://100.64.0.2:8000"
         station_interface: station0
         station_dir: /srv/station

@@ -36,6 +36,7 @@ TAILSCALE_SSH='roles/tailscale/tasks/ssh.yml'
 BACKUP='roles/backup/templates/skibidi-backup.j2'
 BACKUP_SERVICE='roles/backup/templates/skibidi-backup.service.j2'
 BACKUP_DEFAULTS='roles/backup/defaults/main.yml'
+BACKUP_TASKS='roles/backup/tasks/present.yml'
 CHECK_DEFAULTS='roles/checker/defaults/main.yml'
 JAILS='roles/fail2ban/templates/jail.local.j2'
 FAIL2BAN_FACTS='roles/fail2ban/files/skibidi-fail2ban-facts.py'
@@ -294,6 +295,38 @@ defect 'backup/shared-repository' "$BACKUP_DEFAULTS" \
   '}}/{{ backup_user }}/"' \
   '}}/"' \
   "every node pushes to the station's root, which a private-repos station refuses"
+
+defect 'backup/no-retention' "$BACKUP" \
+  '    echo "pushed a snapshot to $station"
+    prune
+' \
+  '    echo "pushed a snapshot to $station"
+' \
+  'snapshots pile up for good, since the station cannot prune a repository it cannot read'
+
+defect 'backup/forget-without-prune' "$BACKUP" \
+  'forget --prune --quiet' \
+  'forget --quiet' \
+  'snapshots are forgotten and their data stays on the station for good'
+
+defect 'backup/prune-failure-swallowed' "$BACKUP" \
+  '        --keep-monthly {{ backup_keep_monthly | quote }}
+' \
+  '        --keep-monthly {{ backup_keep_monthly | quote }} || true
+' \
+  'a prune that fails every night alerts nobody'
+
+defect 'backup/group-by-paths' "$BACKUP" \
+  '        --group-by host,tags \
+' \
+  '' \
+  'a changed list of directories leaves the old paths group unpruned'
+
+defect 'backup/zero-retention-accepted' "$BACKUP_TASKS" \
+  '      - backup_keep_daily + backup_keep_weekly + backup_keep_monthly > 0
+' \
+  '' \
+  'a node file that sets all three to 0 deploys a prune that forgets nothing'
 
 defect 'check/backup-timer-blind' "$CHECK" \
   'if systemctl is-enabled --quiet skibidi-backup.timer 2>/dev/null \

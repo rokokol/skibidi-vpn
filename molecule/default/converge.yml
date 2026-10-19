@@ -22,8 +22,8 @@
     # --- the backup station ---------------------------------------------------
     #
     # A real rest-server, run the way the station's contract describes it, so
-    # the push and the refused delete are asked of the server itself rather than
-    # of a stub. Started before the roles, because the backup role proves the
+    # the push and the prune are asked of the server itself rather than of a
+    # stub. Started before the roles, because the backup role proves the
     # repository at deploy time
 
     - name: Stand a second dummy interface in for the station's tailnet address
@@ -93,7 +93,7 @@
           Description=The backup station a test node pushes to
 
           [Service]
-          ExecStart=/usr/local/bin/rest-server --path {{ station_dir }} --listen {{ station_address }}:8000 --append-only --private-repos
+          ExecStart=/usr/local/bin/rest-server --path {{ station_dir }} --listen {{ station_address }}:8000 --private-repos
         owner: root
         group: root
         mode: "0644"

@@ -822,12 +822,17 @@
         paths: "{{ verify_snapshots }}"
       register: verify_snapshots_after
 
-    - name: The push left one more snapshot on the station
+    # The scenario keeps one snapshot of each kind, and every push of one day
+    # shares the daily slot: the new snapshot stays and the older one goes
+    - name: The push replaced the older snapshot on the station
       ansible.builtin.assert:
-        that: verify_snapshots_after.matched == verify_snapshots_before.matched + 1
+        that:
+          - verify_snapshots_after.matched == 1
+          - (verify_snapshots_after.files | map(attribute='path') | list)
+            != (verify_snapshots_before.files | map(attribute='path') | list)
         fail_msg: >-
           the station held {{ verify_snapshots_before.matched }} snapshot(s) before the push
-          and {{ verify_snapshots_after.matched }} after it
+          and {{ verify_snapshots_after.matched }} after it, where the retention leaves one
 
     # The panel's database and the metric store, each with a table only the
     # real store has: an empty file passes an integrity check too
@@ -891,48 +896,36 @@
       ansible.builtin.assert:
         that:
           - "'pushed a snapshot' in verify_backup_public"
+          - "'applied the retention' in verify_backup_public"
           - "'skibidi-backup run' in verify_backup_public"
           - backup_secrets[inventory_hostname].rest_password not in verify_backup_public
           - backup_secrets[inventory_hostname].repository_password not in verify_backup_public
         fail_msg: a backup password is in the unit, the script or the journal, or the journal holds no push at all
       no_log: true
 
-    # Append-only is the station's promise; this asks the server with the
-    # node's own credentials, the way a node in someone else's hands would
-    - name: Ask the station, as the node, to forget the newest snapshot
+    # The prune must leave a repository that still opens and verifies, asked
+    # with the node's own credentials, as the next night's push would
+    - name: Check the repository, as the node, after the prune
       ansible.builtin.shell:
         cmd: >-
-          set -o pipefail;
           export RESTIC_REST_PASSWORD; RESTIC_REST_PASSWORD=$(cat {{ verify_backup.backup_config_dir }}/rest-password);
-          id=$({{ verify_backup.backup_restic_path }} snapshots --json --latest 1
-          | python3 -c 'import json, sys; print(json.load(sys.stdin)[-1]["id"])');
-          {{ verify_backup.backup_restic_path }} forget "$id"
+          {{ verify_backup.backup_restic_path }} check
         executable: /bin/bash
       environment:
         RESTIC_REPOSITORY: rest:{{ backup_url }}/{{ inventory_hostname }}/
         RESTIC_REST_USERNAME: "{{ inventory_hostname }}"
         RESTIC_PASSWORD_FILE: "{{ verify_backup.backup_config_dir }}/repository-password"
         RESTIC_CACHE_DIR: "{{ verify_backup.backup_cache_dir }}"
-      register: verify_forget
+      register: verify_repository_check
       changed_when: false
       failed_when: false
 
-    - name: Count the snapshots on the station's disk after the attempt
-      ansible.builtin.find:
-        paths: "{{ verify_snapshots }}"
-      register: verify_snapshots_kept
-
-    # Both clauses: restic must have reached the server and been refused, and
-    # the file must still be there. A forget that never ran fails the first
-    - name: The station refused the delete and kept the snapshot
+    - name: The repository is whole after the prune
       ansible.builtin.assert:
-        that:
-          - verify_forget.rc != 0
-          - "'403' in verify_forget.stderr"
-          - verify_snapshots_kept.matched == verify_snapshots_after.matched
+        that: verify_repository_check.rc == 0
         fail_msg: >-
-          forget exited {{ verify_forget.rc }} ({{ verify_forget.stderr_lines[-3:] }}); the
-          station holds {{ verify_snapshots_kept.matched }} of {{ verify_snapshots_after.matched }}
+          restic check exited {{ verify_repository_check.rc }}
+          ({{ verify_repository_check.stderr_lines[-3:] }})
 
     - name: Run the node's own checks
       ansible.builtin.command:

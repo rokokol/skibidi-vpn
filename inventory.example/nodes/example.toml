@@ -67,6 +67,14 @@ metrics_host = "100.72.0.4"
 # left
 # backup_url = "http://100.72.0.9:8000"
 # backup_user = "example"
+# How many snapshots the node keeps. After each successful push the node runs
+# restic forget --prune, because the station cannot read the repository. Each
+# number counts days, weeks or months that keep their newest snapshot, so two
+# pushes on one day keep one. The defaults are 7, 4 and 6; 0 turns a kind off,
+# and all three at 0 stops the deploy
+# backup_keep_daily = 7
+# backup_keep_weekly = 4
+# backup_keep_monthly = 6
 
 # Secrets never live in this file. tailscale_auth_key, certs_cf_token and the
 # backup passwords come from vault.yml, passed with -e; see vault.example.yml

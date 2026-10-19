@@ -4,9 +4,10 @@ The script is rendered from the role's template and run for real against
 SQLite stores made here. Most cases use a stand-in for restic that records what
 it was asked and with what environment: where the secrets travel, when the
 repository is created, what is staged, and which stations are refused. The last
-class runs the real restic against a real rest-server, append-only with private
+class runs the real restic against a real rest-server with private
 repositories, the way the station runs: the push arrives, restores whole, and
-the node cannot delete it. The VM test asks the same of the deployed units.
+the node applies its own retention, since the server does not forbid deletes.
+The VM test asks the same of the deployed units.
 """
 
 from __future__ import annotations
@@ -43,7 +44,8 @@ REPOSITORY_PASSWORD = "r$e'p\"o pass"
 
 def environment() -> Environment:
     env = Environment(trim_blocks=True, undefined=StrictUndefined)
-    env.filters["quote"] = shlex.quote
+    # Ansible's quote filter takes a number too
+    env.filters["quote"] = lambda value: shlex.quote(str(value))
     env.filters["regex_replace"] = lambda value, pattern, replacement: re.sub(pattern, replacement, value)
     return env
 
@@ -154,6 +156,39 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(defaults()["backup_directories"], [])
         self.assertEqual(defaults(group_names=["master"])["backup_directories"], [])
 
+    def test_the_retention_keeps_some_snapshots_of_every_kind_by_default(self):
+        values = defaults()
+        for key in ("backup_keep_daily", "backup_keep_weekly", "backup_keep_monthly"):
+            with self.subTest(key=key):
+                self.assertIsInstance(values[key], int)
+                self.assertGreater(values[key], 0)
+
+    def test_a_node_file_value_replaces_the_retention_default(self):
+        values = defaults(backup_keep_daily=1, backup_keep_weekly=2, backup_keep_monthly=3)
+        self.assertEqual([values["backup_keep_daily"], values["backup_keep_weekly"],
+                          values["backup_keep_monthly"]], [1, 2, 3])
+
+    def test_a_retention_that_keeps_nothing_stops_the_deploy(self):
+        # restic forget without any --keep-* flag forgets nothing, so a policy
+        # of zeros would pass every night and never prune
+        tasks = yaml.safe_load((ROLE / "tasks" / "present.yml").read_text())
+        checks = [task["ansible.builtin.assert"]["that"] for task in tasks
+                  if "backup_keep_daily" in json.dumps(task.get("ansible.builtin.assert", {}))]
+        self.assertEqual(len(checks), 1, "one assert must judge the retention")
+        env = environment()
+
+        def passes(**keep) -> bool:
+            scope = {**defaults(), **keep}
+            return all(env.compile_expression(condition)(**scope) for condition in checks[0])
+
+        self.assertTrue(passes())
+        self.assertTrue(passes(backup_keep_daily=1, backup_keep_weekly=0, backup_keep_monthly=0))
+        for keep in ({"backup_keep_daily": 0, "backup_keep_weekly": 0, "backup_keep_monthly": 0},
+                     {"backup_keep_daily": -1},
+                     {"backup_keep_daily": "seven"}):
+            with self.subTest(keep=keep):
+                self.assertFalse(passes(**keep))
+
     def test_the_panel_database_and_the_metric_store_are_staged_everywhere(self):
         self.assertEqual(defaults()["backup_databases"],
                          ["/etc/x-ui/x-ui.db", "/var/lib/skibidi-metrics/metrics.db"])
@@ -191,14 +226,16 @@ class TestUnits(unittest.TestCase):
 
 
 # Records each call as one line of arguments and the restic environment it saw,
-# and answers `cat config` with STUB_CAT_RC
+# and answers `cat config` with STUB_CAT_RC, `backup` with STUB_BACKUP_RC and
+# `forget` with STUB_FORGET_RC
 RESTIC_STUB = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["STUB_LOG"], "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:],
                           "env": {k: v for k, v in os.environ.items() if k.startswith("RESTIC_")}}) + "\\n")
-if sys.argv[1:3] == ["cat", "config"]:
-    rc = int(os.environ.get("STUB_CAT_RC", "0"))
+verbs = {"cat": "STUB_CAT_RC", "backup": "STUB_BACKUP_RC", "forget": "STUB_FORGET_RC"}
+if sys.argv[1] in verbs:
+    rc = int(os.environ.get(verbs[sys.argv[1]], "0"))
     if rc:
         print(f"Fatal: stub refuses with {rc}", file=sys.stderr)
     sys.exit(rc)
@@ -244,17 +281,19 @@ class TestScript(unittest.TestCase):
         (self.report / "mpl").mkdir(parents=True)
         (self.report / "snapshot-2026-10-05.json").write_text("{}")
 
-    def script(self, url=TUNNEL_URL) -> Path:
+    def script(self, url=TUNNEL_URL, **paths) -> Path:
         return write_script(
             self.dir, url,
             backup_databases=[str(self.panel), str(self.metrics)],
             backup_directories=[str(self.report)],
             backup_excludes=[str(self.report / "mpl")],
+            **paths,
         )
 
-    def run_script(self, *args, url=TUNNEL_URL, cat_rc=0):
-        env = {**os.environ, "STUB_LOG": str(self.log), "STUB_CAT_RC": str(cat_rc)}
-        return subprocess.run([str(self.script(url)), *args],
+    def run_script(self, *args, url=TUNNEL_URL, cat_rc=0, backup_rc=0, forget_rc=0, **paths):
+        env = {**os.environ, "STUB_LOG": str(self.log), "STUB_CAT_RC": str(cat_rc),
+               "STUB_BACKUP_RC": str(backup_rc), "STUB_FORGET_RC": str(forget_rc)}
+        return subprocess.run([str(self.script(url, **paths)), *args],
                               capture_output=True, text=True, env=env, check=False)
 
     def calls(self) -> list[dict]:
@@ -274,12 +313,45 @@ class TestScript(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("pushed a snapshot", result.stdout)
         verbs = [call["argv"][0] for call in self.calls()]
-        self.assertEqual(verbs, ["cat", "init", "backup"])
+        self.assertEqual(verbs, ["cat", "init", "backup", "forget"])
 
     def test_an_existing_repository_is_not_created_again(self):
         result = self.run_script("run", cat_rc=0)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call["argv"][0] for call in self.calls()], ["cat", "backup", "forget"])
+
+    def test_the_push_is_followed_by_a_prune_under_the_configured_retention(self):
+        result = self.run_script("run", backup_keep_daily=1, backup_keep_weekly=2,
+                                 backup_keep_monthly=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        forget = self.calls()[-1]["argv"]
+        self.assertEqual(forget[0], "forget")
+        self.assertIn("--prune", forget)
+        for flag, count in (("--keep-daily", "1"), ("--keep-weekly", "2"), ("--keep-monthly", "3")):
+            with self.subTest(flag=flag):
+                self.assertEqual(forget[forget.index(flag) + 1], count)
+
+    def test_the_prune_reaches_this_nodes_snapshots_whatever_their_paths(self):
+        # restic groups by host and paths unless told otherwise, and a changed
+        # list of directories would leave the old group's snapshots for good
+        self.run_script("run")
+        forget = self.calls()[-1]["argv"]
+        self.assertEqual(forget[forget.index("--host") + 1], "node-1")
+        self.assertEqual(forget[forget.index("--tag") + 1], "skibidi-backup")
+        self.assertEqual(forget[forget.index("--group-by") + 1], "host,tags")
+
+    def test_a_failed_push_prunes_nothing(self):
+        # A prune after a push that failed could drop the last good snapshot
+        result = self.run_script("run", backup_rc=1)
+        self.assertNotEqual(result.returncode, 0)
         self.assertEqual([call["argv"][0] for call in self.calls()], ["cat", "backup"])
+        self.assertNotIn("pushed a snapshot", result.stdout)
+
+    def test_a_failed_prune_fails_the_run(self):
+        # The failure is what OnFailure turns into the owner's alert
+        result = self.run_script("run", forget_rc=1)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([call["argv"][0] for call in self.calls()], ["cat", "backup", "forget"])
 
     def test_a_repository_it_cannot_open_stops_the_run(self):
         # 12 is a wrong repository password: a second init would hide it
@@ -304,7 +376,7 @@ class TestScript(unittest.TestCase):
 
     def test_the_push_names_the_staging_directory_and_the_report_state(self):
         self.run_script("run")
-        backup = self.calls()[-1]["argv"]
+        backup = next(call["argv"] for call in self.calls() if call["argv"][0] == "backup")
         self.assertEqual(backup[backup.index("--host") + 1], "node-1")
         self.assertEqual(backup[backup.index("--exclude") + 1], str(self.report / "mpl"))
         self.assertEqual(backup[-2:], [str(self.dir / "state" / "staging"), str(self.report)])
@@ -530,8 +602,9 @@ def free_port() -> int:
 class TestRealStation(unittest.TestCase):
     """The rendered script, the real restic and a real rest-server.
 
-    The server runs the way the station's contract says: append-only, one
-    private repository per account. It listens on loopback, so the test widens
+    The server runs the way the station's contract says: one private
+    repository per account, and no append-only flag, so the node prunes for
+    itself. The station's own read-only snapshots guard against a bad delete. It listens on loopback, so the test widens
     the tunnel ranges to loopback rather than weakening the guard.
     """
 
@@ -552,7 +625,7 @@ class TestRealStation(unittest.TestCase):
         self.url = f"http://127.0.0.1:{port}"
         server = subprocess.Popen(
             [tool("rest-server"), "--path", str(self.station), "--listen", f"127.0.0.1:{port}",
-             "--append-only", "--private-repos"],
+             "--private-repos"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(server.wait)
         self.addCleanup(server.terminate)
@@ -631,14 +704,35 @@ class TestRealStation(unittest.TestCase):
             self.assertEqual(db.execute("select value from settings where key = 'webPort'").fetchall(),
                              [("2053",)])
 
-    def test_the_node_cannot_delete_what_it_pushed(self):
+    def test_each_run_leaves_only_what_the_retention_keeps(self):
+        # Every push of one day is one daily slot, so keep-daily 1 leaves the
+        # newest of them. The data of the dropped snapshots goes too
+        self.script = write_script(
+            self.dir, self.url,
+            backup_restic_path=self.restic,
+            backup_tunnel_ranges=["127.0.0.0/8"],
+            backup_databases=[str(self.panel)],
+            backup_keep_daily=1, backup_keep_weekly=1, backup_keep_monthly=1,
+        )
         self.assertEqual(self.run_script("run").returncode, 0)
-        pushed = self.snapshots()
-        self.assertEqual(len(pushed), 1)
-        forget = self.as_node("forget", pushed[0])
-        self.assertNotEqual(forget.returncode, 0)
-        self.assertIn("403", forget.stderr)
-        self.assertEqual(self.snapshots(), pushed)
+        first = self.snapshots()
+        self.assertEqual(len(first), 1)
+        packed = set(self.pack_files())
+        # New data, so the first snapshot owns packs that nothing else uses
+        self.writer.execute("insert into settings values ('blob', ?)", (os.urandom(200_000).hex(),))
+        self.writer.commit()
+        result = self.run_script("run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        last = self.snapshots()
+        self.assertEqual(len(last), 1)
+        self.assertNotEqual(last, first)
+        self.assertTrue(packed - set(self.pack_files()), "the dropped snapshot's data was not pruned")
+        check = self.as_node("check")
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def pack_files(self) -> list[str]:
+        data = self.station / "node-1" / "data"
+        return sorted(path.name for path in data.rglob("*") if path.is_file())
 
     def test_the_node_cannot_reach_another_node_repository(self):
         other = self.as_node("init", repository="node-2")

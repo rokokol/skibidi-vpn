@@ -54,6 +54,16 @@ backup_directories: []
 # Paths under those directories that a restore does not need
 backup_excludes: []
 
+# What the node keeps, applied by `restic forget --prune` after each push. The
+# station does not run append-only and never holds the repository key, so only
+# the node can forget and prune; the station guards against a bad delete with
+# its own read-only snapshots of the repositories. Each number is how many
+# periods keep their newest snapshot, so two pushes on one day keep one. A node
+# file sets any of the three; 0 turns that kind off, and not all three may be 0
+backup_keep_daily: 7
+backup_keep_weekly: 4
+backup_keep_monthly: 6
+
 # Scattered so the fleet does not reach one station at the same moment. The
 # checker's silence limit for skibidi-backup.timer assumes a daily push
 backup_on_calendar: daily

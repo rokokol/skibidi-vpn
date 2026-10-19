@@ -13,7 +13,7 @@ usage() {
     cat <<'EOF'
 Push this node's backup to the station's restic REST server
 
-  skibidi-backup run       copy each store, then push a snapshot
+  skibidi-backup run       copy each store, push a snapshot, then prune old ones
   skibidi-backup init      create the repository unless it exists
   skibidi-backup target    check that the station may be reached as configured
   skibidi-backup help      show this help
@@ -126,6 +126,20 @@ stage() {
     done
 }
 
+# The station accepts deletes and cannot read the repository, so the node alone
+# applies its retention. It runs only after a push that succeeded: a prune
+# after a failed push could drop the last good snapshot. Grouping by host and
+# tags, not by paths, keeps a changed list of directories from leaving the old
+# group's snapshots behind. A failure here fails the run, which raises the alert
+prune() {
+    "$restic" forget --prune --quiet --host {{ inventory_hostname | quote }} --tag skibidi-backup \
+        --group-by host,tags \
+        --keep-daily {{ backup_keep_daily | quote }} \
+        --keep-weekly {{ backup_keep_weekly | quote }} \
+        --keep-monthly {{ backup_keep_monthly | quote }}
+    echo "applied the retention of the repository"
+}
+
 run() {
     local exclude flags=()
     init
@@ -136,6 +150,7 @@ run() {
     "$restic" backup --quiet --host {{ inventory_hostname | quote }} --tag skibidi-backup \
         "${flags[@]}" "$staging" "${directories[@]}"
     echo "pushed a snapshot to $station"
+    prune
 }
 
 no_arguments() {
