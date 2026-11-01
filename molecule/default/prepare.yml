@@ -1,0 +1,128 @@
+---
+# The VM starts as the bare cloud image does, so that converge has something to
+# repair. Each of these plants a state a real node was found in: a minimal image
+# with the AppArmor userspace cut out, a cloud image carrying an OS Login
+# package its metadata never enables, and a source list left behind by an
+# install that predates the role. A check that cannot go red is not evidence,
+# and these are what make the verifier's assertions able to.
+#
+# This runs once, before converge, and is not repeated for the idempotence pass:
+# a state planted again after the roles repaired it would make every converge
+# change something by construction
+- name: Plant the states the roles exist to repair
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Take the AppArmor userspace away, the way a minimal image ships it
+      ansible.builtin.apt:
+        name: apparmor
+        state: absent
+        purge: true
+
+    # Purging the package removes the profiles from disk but not from the kernel:
+    # they stay loaded until something unloads them, and a node that never had the
+    # package loaded without them. Only a boot reproduces that state, and without
+    # it the converge could go green on a machine that was already in the state
+    - name: Boot without the package, the way a minimal image does
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+
+    - name: Read the profiles that are left
+      ansible.builtin.slurp:
+        src: /sys/kernel/security/apparmor/profiles
+      register: prepare_profiles
+
+    - name: Read what the kernel reports about the restriction
+      ansible.builtin.command:
+        argv: [sysctl, -n, kernel.apparmor_restrict_unprivileged_userns]
+      register: prepare_userns
+      changed_when: false
+
+    # Without this the converge could go green on a machine that was already in
+    # the state, and prove nothing about the role
+    - name: The VM is now in the state an unhardened image is in
+      ansible.builtin.assert:
+        that:
+          - "'unprivileged_userns (enforce)' not in (prepare_profiles.content | b64decode)"
+          - prepare_userns.stdout | trim == '0'
+        fail_msg: >-
+          the image still holds the profile or the value: {{ prepare_userns.stdout }}
+          and {{ (prepare_profiles.content | b64decode).splitlines()[:3] }}
+
+    # Built here rather than pulled: no cloud ships a package a test could
+    # install, and what the role must react to is the name and the files
+    - name: Build the OS Login package a cloud image ships
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          work=$(mktemp -d)
+          mkdir -p "$work/DEBIAN" "$work/usr/lib/security"
+          printf '%s\n' \
+            'Package: google-compute-engine-oslogin' \
+            'Version: 0.0.0-molecule' \
+            'Architecture: all' \
+            'Maintainer: molecule <molecule@example.test>' \
+            'Description: Stand-in for the OS Login package a cloud image ships' \
+            > "$work/DEBIAN/control"
+          : > "$work/usr/lib/security/pam_oslogin_login.so"
+          dpkg-deb --build "$work" /root/oslogin-stand-in.deb
+          rm -rf "$work"
+          dpkg -i /root/oslogin-stand-in.deb
+          apt-mark hold google-compute-engine-oslogin
+        executable: /bin/bash
+        creates: /root/oslogin-stand-in.deb
+
+    - name: Read whether the stand-in is already installed
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, google-compute-engine-oslogin]
+      register: prepare_oslogin
+      changed_when: false
+      failed_when: false
+
+    # A second run of this file must land in the same state, because the role
+    # removes the package during converge and the file is still on disk
+    - name: Install it again if an earlier converge took it away
+      ansible.builtin.command:
+        argv: [dpkg, -i, /root/oslogin-stand-in.deb]
+      changed_when: true
+      when: prepare_oslogin.rc != 0
+
+    - name: Keep the package where the image had put it
+      ansible.builtin.command:
+        argv: [apt-mark, hold, google-compute-engine-oslogin]
+      changed_when: false
+
+    - name: Read the package back
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, google-compute-engine-oslogin]
+      register: prepare_oslogin_after
+      changed_when: false
+      failed_when: false
+
+    - name: The image carries the package and nothing references it
+      ansible.builtin.assert:
+        that: prepare_oslogin_after.rc == 0
+        fail_msg: "the stand-in did not install: {{ prepare_oslogin_after.stderr }}"
+
+    # Exactly what an installer that predates deb822_repository leaves behind.
+    # The key comes with it: a node that installed the package by hand has both,
+    # and the list alone would make the first apt update in converge fail on a
+    # repository apt cannot verify - a different failure from the one under test
+    - name: Put the key a hand install left
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../roles/tailscale/files/tailscale-archive-keyring.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Put back the source list a hand install left
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/tailscale.list
+        content: |
+          # Tailscale packages for ubuntu noble
+          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu {{ ansible_facts['distribution_release'] }} main
+        owner: root
+        group: root
+        mode: "0644"

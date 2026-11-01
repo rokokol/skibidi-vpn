@@ -9,6 +9,13 @@
     update_cache: true
     cache_valid_time: 3600
 
+# Before the kernel settings below, since the drop-in it brings is one of them
+- name: Hold the node to a policy AppArmor can enforce
+  ansible.builtin.import_tasks: apparmor.yml
+
+- name: Leave no PAM module the node never plugs in
+  ansible.builtin.import_tasks: oslogin.yml
+
 - name: Load kernel modules needed by the sysctl settings
   ansible.builtin.copy:
     dest: /etc/modules-load.d/skibidi-vpn.conf

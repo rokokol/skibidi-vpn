@@ -249,6 +249,82 @@
           {{ verify_declarers.stdout_lines | length }} files set congestion control
           ({{ verify_declarers.stdout_lines | join(', ') }}); the last one read wins
 
+    # --- AppArmor -------------------------------------------------------------
+    #
+    # prepare took the package away and left the kernel reporting no restriction,
+    # the way a minimal image ships. Both halves are asked here because either
+    # alone reads green: a loaded profile with the sysctl at 0 restricts nothing
+    # that would matter, and the sysctl at 1 with no profile leaves the door open
+
+    - name: Read the restriction and the profile the kernel holds
+      ansible.builtin.shell:
+        cmd: >-
+          sysctl -n kernel.apparmor_restrict_unprivileged_userns;
+          grep -c 'unprivileged_userns (enforce)' /sys/kernel/security/apparmor/profiles || true
+        executable: /bin/bash
+      register: verify_apparmor
+      changed_when: false
+
+    - name: Ask whether an unprivileged account can still make a user namespace
+      ansible.builtin.command:
+        argv: [runuser, -u, nobody, --, unshare, -U, -r, true]
+      register: verify_userns
+      changed_when: false
+      failed_when: false
+
+    - name: The deploy turned a permissive kernel into a policy
+      ansible.builtin.assert:
+        that:
+          - verify_apparmor.stdout_lines[0] | trim == '1'
+          - verify_apparmor.stdout_lines[1] | trim | int > 0
+          - verify_userns.rc != 0
+        fail_msg: >-
+          sysctl and profiles report {{ verify_apparmor.stdout_lines }}, and an
+          unprivileged user namespace exited {{ verify_userns.rc }}
+
+    # --- what the image carried and nothing used ------------------------------
+    #
+    # prepare installed the package and left no configuration naming it, which is
+    # the state ru-msk-1 was found in. The reverse - a node that really plugs it
+    # in - is the last play, since it has to put the package back
+
+    - name: Ask whether the OS Login package is still installed
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, google-compute-engine-oslogin]
+      register: verify_oslogin_gone
+      changed_when: false
+      failed_when: false
+
+    - name: The package nothing references is gone from the node
+      ansible.builtin.assert:
+        that: verify_oslogin_gone.rc != 0
+        fail_msg: "dpkg still knows the package: {{ verify_oslogin_gone.stdout }}"
+
+    # The symptom apt reported on both real nodes: one repository announced by
+    # two files, warned about once per architecture and component on every run
+    - name: Look for the source list a hand install leaves
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/tailscale.list
+      register: verify_tailscale_list
+
+    - name: Ask apt to read its sources again
+      ansible.builtin.command:
+        argv: [apt-get, update]
+      register: verify_apt_update
+      changed_when: false
+      failed_when: false
+
+    - name: One repository is announced by one file
+      ansible.builtin.assert:
+        that:
+          - not verify_tailscale_list.stat.exists
+          - verify_apt_update.rc == 0
+          - "'configured multiple times' not in verify_apt_update.stderr"
+        fail_msg: >-
+          the legacy list is {{ 'still there' if verify_tailscale_list.stat.exists else 'gone' }}
+          and apt exited {{ verify_apt_update.rc }} with
+          {{ verify_apt_update.stderr_lines | select('search', 'multiple times') | list }}
+
     - name: Read the panel unit's own properties
       ansible.builtin.systemd_service:
         name: x-ui
@@ -1091,3 +1167,62 @@
     - name: Name the observer again
       ansible.builtin.include_role:
         name: observers
+
+# The removal is decided by the node's own configuration, so a node that plugs
+# OS Login in keeps it: a blind purge would take that node's accounts away, and
+# nothing in a task list would look different. Only the grep tells them apart,
+# which is why both directions are asked rather than the installing one
+- name: Keep OS Login on a node that uses it
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Find the stand-in the prepare step built
+      ansible.builtin.stat:
+        path: /root/oslogin-stand-in.deb
+      register: verify_stand_in
+
+    - name: The stand-in exists, so this check is not skipped in silence
+      ansible.builtin.assert:
+        that: verify_stand_in.stat.exists
+        fail_msg: the prepare step built no stand-in package; run the whole scenario
+
+    - name: Install it again, as a cloud image would
+      ansible.builtin.command:
+        argv: [dpkg, -i, /root/oslogin-stand-in.deb]
+      changed_when: true
+
+    - name: Point a configuration at it, the way a node with OS Login has it
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/99-oslogin-verifier.conf
+        content: |
+          AuthorizedKeysCommand /usr/bin/google_authorized_keys
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run the removal against that node
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: oslogin
+
+    - name: Ask for the package again
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, google-compute-engine-oslogin]
+      register: verify_oslogin_kept
+      changed_when: false
+      failed_when: false
+
+    - name: The package a configuration plugs in is still there
+      ansible.builtin.assert:
+        that: verify_oslogin_kept.rc == 0
+        fail_msg: the role removed a package its own configuration references
+
+    - name: Put the node back the way converge left it
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          rm -f /etc/ssh/sshd_config.d/99-oslogin-verifier.conf
+          dpkg --purge google-compute-engine-oslogin
+        executable: /bin/bash
+      changed_when: true

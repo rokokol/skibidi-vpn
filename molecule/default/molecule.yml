@@ -101,6 +101,7 @@ scenario:
     - cleanup
     - destroy
     - create
+    - prepare
     - converge
     - idempotence
     - verify

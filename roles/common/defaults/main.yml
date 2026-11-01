@@ -56,3 +56,13 @@ common_manage_resolver: true
 # own soft limit at startup, which is why nothing has bitten yet; anything else
 # on the box does not
 common_xui_nofile: 524288
+
+# Where a configuration would name OS Login if the node used it. The package is
+# removed only while none of these mention it, so a node that relies on it keeps
+# its accounts working
+common_oslogin_config_paths:
+  - /etc/ssh
+  - /etc/pam.d
+  - /etc/nsswitch.conf
+common_oslogin_packages:
+  - google-compute-engine-oslogin

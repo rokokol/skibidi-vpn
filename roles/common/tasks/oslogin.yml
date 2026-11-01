@@ -1,0 +1,33 @@
+---
+# A cloud image can ship the OS Login package while its metadata never turns
+# the feature on: PAM and NSS modules in the paths a later config edit would
+# trust, pinned on hold so apt never fixes what is inside. What decides is the
+# node's own configuration, not the package's presence - a node that really
+# uses OS Login keeps it
+- name: Look for a configuration that plugs OS Login in
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      grep -rElIs 'oslogin|google_authorized_keys' {{ common_oslogin_config_paths | join(' ') }} | sort
+    executable: /bin/bash
+  register: common_oslogin_references
+  changed_when: false
+  failed_when: false
+
+- name: Say why the package stays
+  ansible.builtin.debug:
+    msg: >-
+      OS Login is installed here: {{ common_oslogin_references.stdout_lines | join(', ') }}
+      references it, so the package is left alone
+  when: common_oslogin_references.stdout | trim | length > 0
+
+# The image holds the package, so apt refuses to touch it without this: the
+# hold is the reason nobody has fixed what is inside, and the removal has to be
+# told it is deliberate rather than hitting a wall the role cannot see
+- name: Remove the OS Login package nothing references
+  ansible.builtin.apt:
+    name: "{{ common_oslogin_packages }}"
+    state: absent
+    purge: true
+    allow_change_held_packages: true
+  when: common_oslogin_references.stdout | trim | length == 0

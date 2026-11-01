@@ -1,0 +1,83 @@
+---
+# The minimal cloud images this fleet started from dropped the AppArmor
+# userspace. `libapparmor1` alone leaves the kernel's LSM enabled with nothing
+# loaded, so an unprivileged account may create a user namespace - the first
+# primitive of nearly every kernel escalation of the last years. The package
+# brings the profiles and the drop-in that closes that door, so a node that
+# never had it ends up with the same policy as one that came with it
+- name: Install the AppArmor userspace
+  ansible.builtin.apt:
+    name: apparmor
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Load the profiles at boot and now
+  ansible.builtin.systemd_service:
+    name: apparmor
+    enabled: true
+    state: started
+
+# The drop-in ships in /usr/lib/sysctl.d and is read at boot, so a node that
+# gained AppArmor while running keeps the old value. Applying the set now costs
+# one systemd call and makes the value below the kernel's rather than the file's
+- name: Read the restriction the current kernel reports
+  ansible.builtin.command:
+    argv: [sysctl, -n, kernel.apparmor_restrict_unprivileged_userns]
+  register: common_userns_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Apply the settings the package brought
+  ansible.builtin.command:
+    argv: [systemctl, restart, systemd-sysctl]
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - common_userns_before.stdout | default('') | trim != '1'
+
+# Read again rather than reuse the value from before the restart: an assertion
+# against the old reading fails on a node the line above has just repaired
+- name: Read the restriction the kernel reports once the drop-in is applied
+  ansible.builtin.command:
+    argv: [sysctl, -n, kernel.apparmor_restrict_unprivileged_userns]
+  register: common_userns_restriction
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+# Both halves are asked of the kernel, because either one alone reads green:
+# the file can say the restriction is on while no profile enforcing it is
+# loaded, and a loaded profile restricts nothing while the sysctl is 0
+- name: Ask the kernel which profiles it holds
+  ansible.builtin.slurp:
+    src: /sys/kernel/security/apparmor/profiles
+  register: common_apparmor_profiles
+  check_mode: false
+
+- name: Ask whether an unprivileged account can still make a user namespace
+  ansible.builtin.command:
+    argv: [runuser, -u, nobody, --, unshare, -U, -r, true]
+  register: common_unprivileged_userns
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Fail when the node restricts nothing
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - "'unprivileged_userns (enforce)' in (common_apparmor_profiles.content | b64decode)"
+      - common_userns_restriction.stdout | default('') | trim == '1'
+      - common_unprivileged_userns.rc != 0
+    fail_msg: >-
+      AppArmor restricts nothing here: the kernel reports
+      {{ common_userns_restriction.stdout | default('no value') | trim }},
+      {{ 'the unprivileged_userns profile is not loaded in enforce'
+         if 'unprivileged_userns (enforce)' not in (common_apparmor_profiles.content | b64decode)
+         else 'the profile is loaded' }},
+      and an unprivileged user namespace was
+      {{ 'created' if common_unprivileged_userns.rc == 0 else 'refused' }}

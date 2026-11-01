@@ -82,6 +82,17 @@ if [ -n "$iface" ]; then
     fi
 fi
 
+# An unprivileged user namespace is the first step of nearly every kernel
+# escalation, and the restriction on it is two pieces that disagree silently:
+# the sysctl can be 0 while the profile sits loaded, and the profile can be
+# gone while the sysctl says 1. Both are asked, since either alone reads green
+userns=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)
+if [ "$userns" = "1" ] && grep -q 'unprivileged_userns (enforce)' /sys/kernel/security/apparmor/profiles 2>/dev/null; then
+    ok "unprivileged user namespaces are restricted"
+else
+    fail "apparmor.userns" "kernel.apparmor_restrict_unprivileged_userns is ${userns:-unset} and the unprivileged_userns profile is not loaded in enforce"
+fi
+
 # --- conntrack pressure -----------------------------------------------------
 #
 # The table filling up drops connections with nothing in any log to say so

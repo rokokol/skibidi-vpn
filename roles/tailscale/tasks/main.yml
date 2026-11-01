@@ -37,6 +37,16 @@
     signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
     state: present
 
+# The package's own instructions and every installer that predates the module
+# above write `/etc/apt/sources.list.d/tailscale.list`. Left beside
+# `tailscale.sources` it is one repository announced twice, which apt reports
+# as "configured multiple times" on every run, once per architecture and
+# component, and the warnings are then ordinary noise that hides a real one
+- name: Take away the source list a hand install left beside ours
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/tailscale.list
+    state: absent
+
 # No cache_valid_time here, unlike every other apt task: the repository was
 # added moments ago, so a cache considered fresh is a cache that predates it and
 # the package reads as nonexistent. Caught by the VM test, where the repository
