@@ -111,3 +111,17 @@ Things in these roles that read as workarounds and are not: permanent choices th
 **Why it differs from the obvious route:** the obvious route is for each program to push its own numbers with `POST`, which replaces only the metric families in its body and leaves the rest of the group alone. That leaves a series behind for good once the thing it described is gone: a solved problem is a `node_problem` series the next body no longer names, and a `POST` of a family that has no series left does not touch the family at all. The station alerts for as long as the series stays. `PUT` replaces the whole group, so the node says its complete state each time and anything missing from it is gone. That works only with one writer, because two writers wipe each other. The path allows one group per account, so the master's traffic cannot have a group of its own. The reporter therefore writes the traffic to a file, and the collector validates the file and adds it to its body. A file nobody refreshed is left out, so a stopped reporter cannot keep old numbers alive either
 
 **What returning to the obvious route breaks:** with `POST` a recovered node keeps its alerts open, and with `PUT` from two programs the master's traffic and its samples take turns disappearing
+
+---
+
+## The OS Login package is removed, and never installed back
+
+**Where:** `roles/common/tasks/oslogin.yml`, with the package names and the configuration paths it consults in `roles/common/defaults/main.yml`, and the `oslogin.referenced-missing` check in `roles/checker/templates/skibidi-check.j2`
+
+**Why it differs from the obvious route:** the obvious route for a package is `state: present`, so that the node describes what it holds. Here the package a cloud image ships is a hold-pinned build from 2023, made by `checkinstall` on a host nobody can name, and the image's own metadata never turns OS Login on. So the role removes it, and does so every run: no configuration under `/etc/ssh`, `/etc/pam.d` or `/etc/nsswitch.conf` may name it. `libnss_oslogin-` and `pam_oslogin_login.so` sit exactly where `nsswitch.conf` and `/etc/pam.d` would look, the hold stops apt from ever fixing what is inside, and nothing but the image's rebuild would replace them
+
+**What returning to the obvious route breaks:** a later configuration edit would inherit a parser two years old and get an authentication path that answers, fails, and says nothing. The role does not install the package back either: the supported build in `noble-updates`, 20260814.00, depends on `google-guest-agent`, which no node carries, so a deploy would add a chain of Google packages to a node that never asked for OS Login. The checker closes that gap instead, and names `oslogin.referenced-missing` within the half hour when a configuration names OS Login and the package is gone
+
+**Rejected alternative:** keeping the build on hold and writing down why. That keeps a PAM module nobody maintains, and the hold is what makes it immortal
+
+**Enforcement:** the role skips its removal while a configuration references OS Login, so it never breaks a node that really uses it, and the checker fails on the opposite state

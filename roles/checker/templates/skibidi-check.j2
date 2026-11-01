@@ -93,6 +93,26 @@ else
     fail "apparmor.userns" "kernel.apparmor_restrict_unprivileged_userns is ${userns:-unset} and the unprivileged_userns profile is not loaded in enforce"
 fi
 
+# --- OS Login ---------------------------------------------------------------
+#
+# The common role removes the build a cloud image pins, because nothing here
+# names it, and never installs one back: the supported build would bring its
+# whole dependency chain. A node that turns the feature on therefore has PAM and
+# NSS looking for a module that is not there, and nothing else would say so
+if grep -rElIs 'oslogin|google_authorized_keys' {{ common_oslogin_config_paths | join(' ') }} 2>/dev/null | grep -q .; then
+    missing=""
+    for pkg in {{ common_oslogin_packages | join(' ') }}; do
+        dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing="$missing $pkg"
+    done
+    if [ -z "$missing" ]; then
+        ok "OS Login is referenced and its package is installed"
+    else
+        fail "oslogin.referenced-missing" "a configuration names OS Login and$missing is not installed; the logins that rely on it will fail"
+    fi
+else
+    ok "no configuration references OS Login"
+fi
+
 # --- conntrack pressure -----------------------------------------------------
 #
 # The table filling up drops connections with nothing in any log to say so
