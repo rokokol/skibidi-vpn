@@ -39,6 +39,7 @@ molecule test                # real Ubuntu VM under KVM
 - Back up `/etc/x-ui/x-ui.db` before touching anything the panel owns, and keep the rollback on the node
 - Assert the result rather than trusting the module: the `xui` role proves with `ss` that the panel listens only on the tunnel address, because a panel on a public address exposes every client secret
 - Never print a full inbound or the Xray template — they carry client UUIDs, subscription ids and Reality private keys
+- A role reads its own defaults and the keys the registry gives it. Another role's defaults exist only in a play that lists it, so a play that runs one role alone must list the roles whose variables that role's templates read — the `metrics` role reads `backup_*`, `checker_*` and `firewall_tunnel_interface`
 
 ## Upgrades
 
