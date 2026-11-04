@@ -507,7 +507,7 @@ defect 'panel/credential-left-behind' "$PANEL_TASKS" \
   'a node that stopped collecting keeps its panel token on disk'
 
 defect 'panel/tls-pin-skips-the-scheme' "$PANEL_TASKS" \
-  "    - metrics_panel_url is search('^https://')" \
+  '    - metrics_panel_tls' \
   '    - true' \
   'a node whose panel serves plain HTTP fails the deploy reading a certificate it never had'
 

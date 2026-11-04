@@ -5,6 +5,7 @@ without one. What the collector does with it is held in test_panel_metrics.py.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 
 import yaml
@@ -50,13 +51,13 @@ class TestPanelDefaults(unittest.TestCase):
     def test_the_url_follows_the_panel_the_roles_placed(self):
         self.assertEqual(expression("metrics_panel_url", xui_listen_ip="100.72.0.4",
                                      xui_panel_port=16099, xui_base_path="/randomBasePath/",
-                                     certs_domain=""),
+                                     metrics_panel_tls=False),
                          "http://100.72.0.4:16099/randomBasePath/")
 
-    def test_a_node_with_a_certificate_reaches_the_panel_over_tls(self):
+    def test_a_node_whose_panel_serves_tls_reaches_it_over_tls(self):
         self.assertEqual(expression("metrics_panel_url", xui_listen_ip="100.72.0.4",
                                      xui_panel_port=16099, xui_base_path="/randomBasePath/",
-                                     certs_domain="example.org"),
+                                     metrics_panel_tls=True),
                          "https://100.72.0.4:16099/randomBasePath/")
 
 
@@ -93,12 +94,27 @@ class TestPanelTasks(unittest.TestCase):
         self.assertEqual(probes[0]["when"], "metrics_panel_enabled")
         self.assertIs(probes[0]["changed_when"], False)
 
-    def test_the_pin_is_read_from_the_certificate_only_where_the_panel_serves_tls(self):
+    def test_the_pin_is_read_from_the_panel_it_pins_and_only_over_tls(self):
         [pin] = [task for task in by_module("ansible.builtin.command")
-                 if "PEM_cert_to_DER_cert" in str(task["ansible.builtin.command"]["argv"])]
-        self.assertIn("https://", " ".join(pin["when"]))
+                 if "getpeercert" in str(task["ansible.builtin.command"]["argv"])]
+        argv = " ".join(str(item) for item in pin["ansible.builtin.command"]["argv"])
+        self.assertIn("xui_listen_ip", argv)
+        self.assertIn("xui_panel_port", argv)
+        self.assertIn("metrics_panel_tls", pin["when"])
         self.assertIn("metrics_panel_enabled", pin["when"])
         self.assertIs(pin["changed_when"], False)
+
+    def test_the_role_reads_no_default_of_another_role(self):
+        # A role's defaults load only in a play that lists it, and certs is listed
+        # behind a certificate. Anything borrowed here fails a play that runs this
+        # role alone, which is how a single change is deployed
+        borrowed = sorted({
+            word
+            for path in ROLES.joinpath("metrics").rglob("*")
+            if path.is_file()
+            for word in re.findall(r"\b(certs_[a-z_]+)", path.read_text(errors="replace"))
+        })
+        self.assertEqual(borrowed, [])
 
 
 class TestPanelFiles(unittest.TestCase):

@@ -20,16 +20,18 @@
       - python3
       - -c
       - |
-        import hashlib, re, ssl, sys
-        text = open(sys.argv[1]).read()
-        leaf = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", text, re.S)
-        print(hashlib.sha256(ssl.PEM_cert_to_DER_cert(leaf.group(0))).hexdigest())
-      - "{{ metrics_panel_pin_chain }}"
+        import hashlib, socket, ssl, sys
+        context = ssl._create_unverified_context()
+        with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5) as raw:
+            with context.wrap_socket(raw) as tls:
+                print(hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest())
+      - "{{ xui_listen_ip }}"
+      - "{{ xui_panel_port }}"
   register: metrics_panel_pin
   changed_when: false
   when:
     - metrics_panel_enabled
-    - metrics_panel_url is search('^https://')
+    - metrics_panel_tls
 
 # no_log on both writes: the file holds the token, and a failure of either task
 # prints the content it was given

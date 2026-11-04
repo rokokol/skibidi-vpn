@@ -40,11 +40,11 @@ metrics_panel_config: /etc/skibidi/panel-metrics.json
 metrics_panel_token: >-
   {{ (metrics_panel_secrets | default({})).get(inventory_hostname, {}).get('token', '') }}
 
-# The address the panel already listens on, over TLS where a certificate was issued
+# The address the panel listens on. A node whose panel serves TLS says so in its
+# file, and the deploy proves it: the pin is read from that handshake
+metrics_panel_tls: false
 metrics_panel_url: >-
-  {{ 'https' if certs_domain | default('') | length > 0 else 'http' }}://{{ xui_listen_ip }}:{{ xui_panel_port }}{{ xui_base_path }}
-# The leaf the panel presents is the first certificate of this chain
-metrics_panel_pin_chain: "{{ certs_install_dir }}/{{ certs_fullchain_name }}"
+  {{ 'https' if metrics_panel_tls else 'http' }}://{{ xui_listen_ip }}:{{ xui_panel_port }}{{ xui_base_path }}
 
 # fail2ban's own log. The push names the busiest addresses of the day and the
 # latest bans, in every jail and under its name

@@ -68,7 +68,7 @@ curl 'http://100.64.0.7:9099/v1/aggregates?resolution=day&from=1789401600&to=179
 
 ## Panel state
 
-A node answers for its own panel through the panel's API when its file sets `metrics_panel_enabled = true`. The default is off: a node that does not ask for it installs nothing, and a deploy removes the credential file an earlier one wrote
+A node answers for its own panel through the panel's API when its file sets `metrics_panel_enabled = true`, and adds `metrics_panel_tls = true` when that panel serves TLS. The default is off: a node that does not ask for it installs nothing, and a deploy removes the credential file an earlier one wrote
 
 The token comes from `vault.yml`, under `metrics_panel_secrets.<node name>.token`, not from the registry: the inventory drops every credential-shaped key before any role sees it. Create it in the panel with the `monitor` scope, which reaches the status and history routes and nothing that writes. An administrator token works and reaches far more than the collector needs
 
@@ -80,7 +80,7 @@ metrics_panel_secrets:
 
 A node that enables panel state with no entry in the vault fails the deploy before anything is written, because the collector would otherwise push `x_ui_panel_up 0` every minute and say only that the API is unavailable
 
-The role writes `/etc/skibidi/panel-metrics.json` as root, mode `0600`, and proves the token against the panel before the deploy finishes. The file holds `url`, `token` and `pin_sha256`. `url` is the panel the roles placed: the tunnel address, the panel port and the base path, over TLS when the node was issued a certificate. The pin is the SHA-256 of the certificate's leaf, because the certificate names a domain and the collector reaches the panel by an address it does not name; an empty pin means the system CA store answers instead. The collector refuses a file that group or others can open, refuses a redirect, and accepts plain HTTP only for a numeric address that belongs to the node itself
+The role writes `/etc/skibidi/panel-metrics.json` as root, mode `0600`, and proves the token against the panel before the deploy finishes. The file holds `url`, `token` and `pin_sha256`. `url` is the panel the roles placed: the tunnel address, the panel port and the base path, over TLS when the node's file sets `metrics_panel_tls`. The pin is the SHA-256 of the certificate that handshake presents, taken from the handshake itself rather than from a file: the certificate names a domain, while the collector reaches the panel by an address it does not name. A node that sets `metrics_panel_tls` while its panel answers plain HTTP fails the deploy at that handshake. An empty pin means the system CA store answers instead. The collector refuses a file that group or others can open, refuses a redirect, and accepts plain HTTP only for a numeric address that belongs to the node itself
 
 To rotate the token, create a new one in the panel, replace the vault entry and deploy; the old one keeps working until it is deleted in the panel. A rebuilt node restores the file from the vault and needs no other step
 
