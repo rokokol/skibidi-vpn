@@ -66,6 +66,26 @@ curl 'http://100.64.0.7:9099/v1/aggregates?resolution=day&from=1789401600&to=179
 {"from":1789401600,"resolution":"day","rows":[{"bucket_start":1789401600,"dimensions":{"unit":"x-ui"},"kind":"counter","maximum":1.0,"metric":"unit_restarts","minimum":0.0,"samples":144,"total":2.0}],"to":1790006400,"truncated":false}
 ```
 
+## Panel state
+
+Set `metrics_panel_config` in a private node file to an absolute JSON file path on that node. The default disables API queries. The file must belong to root and deny group and other access. Create its API token through the panel with the `monitor` scope; do not use an administrator token
+
+The JSON object requires `url` and `token`. `url` includes the panel base path. For HTTPS, an optional `pin_sha256` field authenticates the certificate by its SHA-256 digest. Without a pin, the collector uses the system CA store. HTTP permits only numeric addresses that belong to the same host. The collector never follows redirects
+
+The existing push reads panel state on each run. It creates no separate service or push group. The role installs the reader, not the credential file; panel administration owns that file and the token
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `x_ui_panel_up` | gauge | 1 when the status API returns valid state, otherwise 0 |
+| `x_ui_xray_up` | gauge | 1 when the panel reports its local Xray as active, otherwise 0 |
+| `x_ui_online_clients` | gauge | Latest online count for this panel and its child nodes, without duplicates |
+
+All panel metrics use the push group's `job` and `instance` labels. A failed status query omits Xray and online values instead of reporting an unknown core as stopped. A failed or stale online query omits only the online value. The reader's `MAX_ONLINE_AGE` in `skibidi_panel.py` defines freshness. Zero clients is a valid sample; empty history is not
+
+The online source is `GET /panel/api/server/history/online/2`, the panel's finest history resolution. A master includes its child nodes. Do not add a master's count to a child's count. This measures the panel's online definition, not open TCP sockets or successful end-to-end VPN connections
+
+Pushgateway retains the last body when a node stops. Readers must also check `push_time_seconds` freshness before they treat panel state as current
+
 ## Metrics
 
 The collector, `roles/metrics/files/skibidi-metrics.py`, is the list: each probe names the metrics it writes, and `COUNTERS` and `DIMENSIONS` beside them say which are counters and what their detail means
@@ -78,7 +98,7 @@ The same numbers leave the node a second way, for the station's dashboard. The c
 - A push is `PUT /metrics/job/vpn/instance/<account>` with HTTP basic auth as that account. The station refuses any other path, any read, and an instance that is not the login. The job is always `vpn`, and a node has one group, so the station sees `instance=<account>` on every series and nothing about the path changed
 - `PUT` replaces the whole group, and the collector's `push` is its only writer. A problem that was solved, a jail that went away and a traffic file that stopped arriving are missing from the next body and leave the station with it. A second writer would be wiped by every push or leave stale series behind, which is why the master's reporter writes its traffic to a file and the collector adds the file to its body
 - Plain HTTP is accepted for a station inside the tunnel ranges and HTTPS anywhere, by the same rule as the backup. The push asks `skibidi-backup target` before it sends the password
-- The body is the Prometheus text format, every name starts with `vpn_`, and no node name is in a metric name. The label that identifies the node is the instance
+- The body uses the Prometheus text format. OS and traffic names start with `vpn_`; panel state uses the explicit `x_ui_*` names in "Panel state". `node_problem` is the shared alert name. The `instance` label identifies the source node
 - A push at least every quarter hour is the contract: the station alerts when `push_time_seconds` of a node is older than an hour. A push that fails is a line in the journal and costs no sample
 
 ```sh
@@ -102,7 +122,7 @@ The newest sample of each series that is less than two hours old. A probe that s
 | `vpn_ufw_drops_total` | counter | none |
 | `node_problem` | gauge | `key`, `summary` |
 
-`node_problem` is the one name without the prefix, because the station's own rule reads it. It has one series of value `1` for each failure the last self-check recorded, with the help text "One unresolved problem this node reports of itself, by cause". `key` is the cause: letters, digits, dots, underscores and hyphens, the same on every run, with nothing in it that varies, so the station can keep one alert for it. `summary` is the first clause of the check's message, a short plain line that becomes the alert's subject. A record that is missing, or older than the check's silence limit, is one problem of its own with the key `check.record-missing` or `check.record-stale`. A clean check pushes no `node_problem` series at all, and a solved problem is missing from the next body. The quiet items of the daily check, such as pending updates and a required reboot, are not problems here. A failed check also triggers a push at once, from its alert unit, and mails only if that push fails
+The station's alert rule reads `node_problem` without the `vpn_` prefix. It has one series of value `1` for each failure the last self-check recorded, with the help text "One unresolved problem this node reports of itself, by cause". `key` is the cause: letters, digits, dots, underscores and hyphens, the same on every run, with nothing in it that varies, so the station can keep one alert for it. `summary` is the first clause of the check's message, a short plain line that becomes the alert's subject. A record that is missing, or older than the check's silence limit, is one problem of its own with the key `check.record-missing` or `check.record-stale`. A clean check pushes no `node_problem` series at all, and a solved problem is missing from the next body. The quiet items of the daily check, such as pending updates and a required reboot, are not problems here. A failed check also triggers a push at once, from its alert unit, and mails only if that push fails
 
 The firewall drops are counted per interval in the store. The push turns them into a running total that the collector keeps in the store's state, because a dashboard cannot add up an interval count that arrives again with every push
 

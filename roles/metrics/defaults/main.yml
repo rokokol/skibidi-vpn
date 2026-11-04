@@ -28,6 +28,9 @@ metrics_push_textfile: /var/lib/skibidi-report/traffic.prom
 # no row to it, so a short interval costs the store nothing
 metrics_push_interval: 1min
 
+# The panel API credential stays outside the environment and the public inventory
+metrics_panel_config: ""
+
 # fail2ban's own log. The push names the busiest addresses of the day and the
 # latest bans, in every jail and under its name
 metrics_fail2ban_log: /var/log/fail2ban.log

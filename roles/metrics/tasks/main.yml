@@ -31,6 +31,7 @@
   loop:
     - skibidi_push.py
     - skibidi_problems.py
+    - skibidi_panel.py
 
 - name: Make the directory the push target lives in
   ansible.builtin.file:

@@ -20,9 +20,8 @@ from pathlib import Path
 
 JOB = "vpn"
 PREFIX = "vpn_"
-# The one name outside the prefix. The station's own rule for a node that
-# reports trouble with itself reads exactly this, in the node's own group
-UNPREFIXED = frozenset({"node_problem"})
+# These names identify panel state and the station's common problem contract
+UNPREFIXED = frozenset({"node_problem", "x_ui_panel_up", "x_ui_xray_up", "x_ui_online_clients"})
 
 # A series counts as current while its newest sample is this young. It is
 # longer than the hourly updates probe, and short enough that a probe which

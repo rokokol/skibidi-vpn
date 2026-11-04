@@ -470,7 +470,7 @@ def push_latest(now_us: int) -> int:
         return 1
     try:
         station = skibidi_push.target(os.environ)
-        with connect() as connection:
+        with contextlib.closing(connect()) as connection, connection:
             if station is None:
                 # Said once, not every ten minutes: a node that names no
                 # station is a decision, and a journal line per run would
@@ -487,6 +487,10 @@ def push_latest(now_us: int) -> int:
             total = state_value(connection, UFW_TOTAL)
         families = push_families(rows, None if total is None else float(total), open_problems(os.environ))
         families += attacker_families(os.environ, time.time())
+        if os.environ.get("SKIBIDI_PANEL_CONFIG"):
+            import skibidi_panel
+
+            families += skibidi_panel.families(os.environ, time.time())
         body = skibidi_push.render(families) + traffic_text(
             os.environ, {item["name"] for item in families}, time.time()
         )
@@ -500,7 +504,7 @@ def push_latest(now_us: int) -> int:
 def collect(push: bool = True) -> int:
     now_us = int(time.time() * 1_000_000)
     failed = []
-    with connect() as connection:
+    with contextlib.closing(connect()) as connection, connection:
         rows = []
         # The probes that need the store's clock and state are bound here;
         # named explicitly, because a lambda's __name__ is "<lambda>"

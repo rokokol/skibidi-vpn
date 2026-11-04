@@ -120,6 +120,13 @@ class TestPushEnvironment(unittest.TestCase):
     def test_the_default_port_is_the_gateways(self):
         self.assertEqual(self.values()["metrics_push_port"], 9091)
 
+    def test_panel_collection_is_opt_in_and_the_environment_carries_only_a_path(self):
+        self.assertNotIn("SKIBIDI_PANEL_CONFIG", self.pushed())
+        values = dict(self.values(), metrics_panel_config="/etc/skibidi/panel-metrics.json")
+        text = render("metrics", "push.env.j2", values)
+        self.assertEqual(env_file(text)["SKIBIDI_PANEL_CONFIG"], values["metrics_panel_config"])
+        self.assertNotIn("SKIBIDI_PANEL_TOKEN", text)
+
     def test_no_secret_is_in_the_file(self):
         values = dict(self.values(), backup_rest_password="s3cret-value-xyz")
         self.assertNotIn("s3cret-value-xyz", render("metrics", "push.env.j2", values))

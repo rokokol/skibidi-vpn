@@ -84,7 +84,7 @@ class TestRender(unittest.TestCase):
         self.assertEqual(parse_exposition(text)["node_problem"]["samples"], [({"key": "a"}, 1.0)])
 
     def test_no_other_name_escapes_the_prefix(self):
-        for name in ("node_problems", "node_problem_total", "problem"):
+        for name in ("node_problems", "node_problem_total", "problem", "x_ui_arbitrary", "x_ui_token"):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 push.render([push.family(name, "gauge", "x", [({}, 1)])])
 

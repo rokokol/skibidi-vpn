@@ -66,7 +66,9 @@ def parse_exposition(text: str, prefix: str = "vpn_") -> dict:
         if not found:
             raise Refused(400, f"line {number}: not a sample")
         name = found["name"]
-        if not name.startswith(prefix) and name != "node_problem":
+        if not name.startswith(prefix) and name not in {
+            "node_problem", "x_ui_panel_up", "x_ui_xray_up", "x_ui_online_clients",
+        }:
             raise Refused(400, f"line {number}: {name} is outside the {prefix} prefix")
         labels = {}
         rest = found["labels"] or ""
