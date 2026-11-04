@@ -25,3 +25,12 @@ backup_secrets:
   example:
     rest_password: replace-me
     repository_password: replace-me
+
+# Optional: read only for a node that sets metrics_panel_enabled in its file.
+# One entry per such node, keyed by the node name. The token is the panel's own,
+# created in its settings with the `monitor` scope; an administrator token
+# reaches every write endpoint and the collector needs none of it.
+# docs/metrics-api.md, "Panel state"
+metrics_panel_secrets:
+  example:
+    token: replace-me

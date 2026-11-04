@@ -1,0 +1,7 @@
+{# JSON carries no comments, so this header is Jinja's. The newline is explicit:
+   the renderer drops the one that ends the line a tag closes #}
+{{ {
+  "url": metrics_panel_url,
+  "token": metrics_panel_token,
+  "pin_sha256": (metrics_panel_pin | default({})).get('stdout', ''),
+} | tojson ~ "\n" }}

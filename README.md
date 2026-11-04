@@ -36,7 +36,7 @@ One registry, two consumers. A node file must be `chmod 600`; the inventory refu
 
 ## Secrets
 
-The roles need two secrets and the registry holds neither: a Tailscale auth key, read only on a node that has not joined yet, and a Cloudflare token for the DNS-01 challenge. The optional backup below adds two more per node that uses it. They travel in a vault file passed to the play:
+The roles need two secrets and the registry holds neither: a Tailscale auth key, read only on a node that has not joined yet, and a Cloudflare token for the DNS-01 challenge. The optional backup below adds two more per node that uses it, and a node that draws its panel's state on the dashboard adds one more. They travel in a vault file passed to the play:
 
 ```sh
 cp vault.example.yml vault.yml          # git-ignored
@@ -44,7 +44,7 @@ ansible-vault encrypt vault.yml
 ansible-playbook site.yml -e @vault.yml --ask-vault-pass
 ```
 
-The panel needs no credential from this repository at all: the reporter reads the panel's database on the master, opened read-only. The panel's API token belongs to the `3x-ui-admin-skill`, issued in the panel's UI under its own name
+The reporter needs no credential: it reads the panel's database on the master, opened read-only. A node that sets `metrics_panel_enabled` does need one, a token created in the panel with the `monitor` scope, and the role installs it as a root-only file the collector reads. The `3x-ui-admin-skill` keeps its own administrator token, and neither replaces the other
 
 ## Backup
 

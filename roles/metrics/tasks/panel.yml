@@ -1,0 +1,71 @@
+---
+# Without a token the collector pushes x_ui_panel_up 0 every minute and says
+# only that the API is unavailable, so the deploy refuses before it can
+- name: Fail when a node collects panel state but the vault holds no token
+  ansible.builtin.assert:
+    that:
+      - metrics_panel_token | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} sets metrics_panel_enabled, but vault.yml has no
+      metrics_panel_secrets.{{ inventory_hostname }}.token. Create a monitor-scope
+      token in the panel, and add it under the node's name
+  when: metrics_panel_enabled
+  no_log: true
+
+# The certificate names a domain while the collector reaches the tunnel
+# address, so the digest of its leaf is what authenticates the panel
+- name: Read the pin of the certificate the panel presents
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import hashlib, re, ssl, sys
+        text = open(sys.argv[1]).read()
+        leaf = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", text, re.S)
+        print(hashlib.sha256(ssl.PEM_cert_to_DER_cert(leaf.group(0))).hexdigest())
+      - "{{ metrics_panel_pin_chain }}"
+  register: metrics_panel_pin
+  changed_when: false
+  when:
+    - metrics_panel_enabled
+    - metrics_panel_url is search('^https://')
+
+# no_log on both writes: the file holds the token, and a failure of either task
+# prints the content it was given
+- name: Write the panel address and token where the collector reads them
+  ansible.builtin.template:
+    src: panel-metrics.json.j2
+    dest: "{{ metrics_panel_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: metrics_panel_enabled
+
+- name: Remove the panel credential from a node that stopped collecting
+  ansible.builtin.file:
+    path: "{{ metrics_panel_config }}"
+    state: absent
+  when: not metrics_panel_enabled
+
+# Proved where the collector will use it: a forgotten or narrow token reads as
+# a healthy panel with nothing to say
+- name: Prove the panel answers this node's token
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys, time
+        sys.path.insert(0, sys.argv[1])
+        import skibidi_panel
+        values = {item["name"]: item["samples"][0][1] for item in skibidi_panel.families(
+            {"SKIBIDI_PANEL_CONFIG": sys.argv[2]}, time.time())}
+        if values.get("x_ui_panel_up") != 1:
+            raise SystemExit("the panel did not answer the token; see the journal of skibidi-push")
+        print("panel answers: " + ", ".join(sorted(name for name in values if name != "x_ui_panel_up")))
+      - "{{ metrics_lib_dir }}"
+      - "{{ metrics_panel_config }}"
+  changed_when: false
+  when: metrics_panel_enabled

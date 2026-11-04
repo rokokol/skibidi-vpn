@@ -23,6 +23,8 @@ CHECK='roles/checker/templates/skibidi-check.j2'
 PUSH='roles/metrics/files/skibidi_push.py'
 PROBLEMS='roles/metrics/files/skibidi_problems.py'
 PUSH_ENV='roles/metrics/templates/push.env.j2'
+PANEL_TASKS='roles/metrics/tasks/panel.yml'
+PANEL_TEMPLATE='roles/metrics/templates/panel-metrics.json.j2'
 METRICS_TASKS='roles/metrics/tasks/main.yml'
 METRICS_DEFAULTS='roles/metrics/defaults/main.yml'
 DAILY='roles/checker/files/skibidi-daily.py'
@@ -488,6 +490,36 @@ defect 'push/secret-in-target-file' "$PUSH_ENV" \
   'SKIBIDI_PUSH_USER={{ backup_user }}
 SKIBIDI_PUSH_PASSWORD={{ backup_rest_password }}' \
   'the station password sits in a world-readable file'
+
+defect 'panel/credential-world-readable' "$PANEL_TASKS" \
+  '    mode: "0600"' \
+  '    mode: "0644"' \
+  'every local account on the node can read the panel token'
+
+defect 'panel/collected-without-a-token' "$PANEL_TASKS" \
+  '      - metrics_panel_token | length > 0' \
+  '      - true' \
+  'a node collects panel state with no credential, writes an empty token and pushes panel_up 0 forever'
+
+defect 'panel/credential-left-behind' "$PANEL_TASKS" \
+  '  when: not metrics_panel_enabled' \
+  '  when: false' \
+  'a node that stopped collecting keeps its panel token on disk'
+
+defect 'panel/tls-pin-skips-the-scheme' "$PANEL_TASKS" \
+  "    - metrics_panel_url is search('^https://')" \
+  '    - true' \
+  'a node whose panel serves plain HTTP fails the deploy reading a certificate it never had'
+
+defect 'panel/environment-not-opt-in' "$PUSH_ENV" \
+  '{% if metrics_panel_enabled %}' \
+  '{% if true %}' \
+  'every node points the collector at a credential file it never wrote'
+
+defect 'panel/file-key-renamed' "$PANEL_TEMPLATE" \
+  '  "url": metrics_panel_url,' \
+  '  "base": metrics_panel_url,' \
+  'the collector refuses the file it was given, so every node reports its panel down'
 
 defect 'push/guard-dropped' "$PUSH_ENV" \
   'SKIBIDI_PUSH_GUARD="{{ backup_script }} target"

@@ -33,6 +33,10 @@
     - skibidi_problems.py
     - skibidi_panel.py
 
+# After the shared code: the probe that proves the token imports the reader
+- name: Install the panel credential and prove it
+  ansible.builtin.import_tasks: panel.yml
+
 - name: Make the directory the push target lives in
   ansible.builtin.file:
     path: /etc/skibidi

@@ -35,6 +35,11 @@ certs_email = "admin@example.org"
 alert_to = "vpn@example.org"
 smtp = "mail.example.org:25025"
 
+# Draw this panel's state on the station's dashboard: the collector reads the
+# panel's API with a monitor-scope token from the vault. docs/metrics-api.md,
+# "Panel state"
+# metrics_panel_enabled = true
+
 # Where this node's metrics API answers, docs/metrics-api.md: a tunnel address,
 # which the checker holds it to. Every node declares one, the master too,
 # because the letter reads the master's own store through it. Not defaulted

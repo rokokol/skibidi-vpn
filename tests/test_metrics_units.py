@@ -20,13 +20,27 @@ ROOT = Path(__file__).resolve().parent.parent
 ROLE = ROOT / "roles" / "metrics"
 
 
+def role_defaults(role: str) -> dict:
+    return yaml.safe_load((ROOT / "roles" / role / "defaults" / "main.yml").read_text())
+
+
 def defaults() -> dict:
     values = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text())
-    # The interface default reads the firewall role's variable, which Ansible
-    # resolves lazily; the test hands it the firewall's own default
-    values["firewall_tunnel_interface"] = yaml.safe_load(
-        (ROOT / "roles" / "firewall" / "defaults" / "main.yml").read_text()
-    )["firewall_tunnel_interface"]
+    # The interface default reads the firewall role's variable, and the panel
+    # credential reads the address and certificate paths the xui and certs roles
+    # own. Ansible resolves those lazily across the play; the test hands it their
+    # own defaults
+    borrowed = {
+        "firewall": ["firewall_tunnel_interface"],
+        "xui": ["xui_listen_ip", "xui_panel_port", "xui_base_path"],
+        "certs": ["certs_domain", "certs_install_dir", "certs_fullchain_name"],
+    }
+    for role, keys in borrowed.items():
+        source = role_defaults(role)
+        for key in keys:
+            values.setdefault(key, source[key])
+    # Supplied by Ansible, and the panel credential is keyed by it
+    values.setdefault("inventory_hostname", "node-a")
     env = Environment(undefined=StrictUndefined)
     for _ in range(3):
         values = {

@@ -24,9 +24,12 @@ def defaults(*roles: str) -> dict:
     values: dict = {}
     for role in roles:
         values.update(yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text()))
-    # What Ansible supplies and no role default does
+    # What Ansible supplies and no role default does. The metrics role also reads
+    # the registry's panel address and the certs role's chain path
     values.update(
         firewall_tunnel_interface="tailscale0", inventory_hostname="node-a", group_names=[],
+        xui_listen_ip="127.0.0.1", xui_panel_port=2053, xui_base_path="/",
+        certs_domain="", certs_install_dir="/root/cert", certs_fullchain_name="fullchain.pem",
         backup_secrets={"node-a": {"rest_password": "rest-secret", "repository_password": "repo-secret"}},
     )
     env = environment()
@@ -122,10 +125,11 @@ class TestPushEnvironment(unittest.TestCase):
 
     def test_panel_collection_is_opt_in_and_the_environment_carries_only_a_path(self):
         self.assertNotIn("SKIBIDI_PANEL_CONFIG", self.pushed())
-        values = dict(self.values(), metrics_panel_config="/etc/skibidi/panel-metrics.json")
+        values = dict(self.values(), metrics_panel_enabled=True)
         text = render("metrics", "push.env.j2", values)
         self.assertEqual(env_file(text)["SKIBIDI_PANEL_CONFIG"], values["metrics_panel_config"])
         self.assertNotIn("SKIBIDI_PANEL_TOKEN", text)
+        self.assertNotIn("token", env_file(text).keys())
 
     def test_no_secret_is_in_the_file(self):
         values = dict(self.values(), backup_rest_password="s3cret-value-xyz")
