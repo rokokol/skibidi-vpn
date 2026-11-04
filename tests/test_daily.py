@@ -10,7 +10,6 @@ unit's business and is proven in the VM scenario.
 from __future__ import annotations
 
 import contextlib
-import gc
 import importlib.util
 import io
 import os
@@ -18,9 +17,10 @@ import sys
 import tempfile
 import threading
 import time
-import warnings
+import urllib.error
 import unittest
 from http.server import ThreadingHTTPServer
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -213,11 +213,15 @@ class TestWhatCannotBeKnown(DailyCase):
         self.assertIn("503", failures[0])
 
     def test_the_error_answer_is_closed_rather_than_left_to_the_collector(self):
-        self.db.unlink()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", ResourceWarning)
-            self.run_daily()
-            gc.collect()
+        # The body of an error answer is a file. A handle left open is released by
+        # the collector at garbage time, where a warning is easy to miss and
+        # nothing fails, so the handle itself is asked
+        body = io.BytesIO(b'{"error": "the store cannot be opened"}')
+        error = urllib.error.HTTPError("http://127.0.0.1:9/v1/health", 503,
+                                       "Service Unavailable", {}, body)
+        with mock.patch.object(daily.urllib.request, "urlopen", side_effect=error):
+            daily.node_problems(self.environ, time.time())
+        self.assertTrue(body.closed, "the daily check kept the answer body open")
 
     def test_a_cut_answer_is_refused_rather_than_read_as_the_newest_rows(self):
         # The rows come oldest first, so a cut drops exactly the newest ones
