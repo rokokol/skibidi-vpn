@@ -133,14 +133,14 @@ def families(environ, now):
         if state not in ("running", "stop", "error"):
             raise PanelError("unknown Xray state")
     except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException, PanelError) as error:
-        print(f"push: panel status unavailable ({type(error).__name__})", file=sys.stderr)
+        print(f"push: panel status unavailable: {error}", file=sys.stderr)
         return result
     result[0] = gauge("x_ui_panel_up", up["help"], 1)
     result.append(gauge("x_ui_xray_up", "1 when the panel reports its local Xray as running", int(state == "running")))
     try:
         value = online_value(api_get(settings, "server/history/online/2"), now)
     except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException, PanelError) as error:
-        print(f"push: panel online unavailable ({type(error).__name__})", file=sys.stderr)
+        print(f"push: panel online unavailable: {error}", file=sys.stderr)
     else:
         result.append(gauge("x_ui_online_clients", "Online clients of this panel and its child nodes without duplicates", value))
     return result

@@ -118,6 +118,16 @@ class TestPanelMetrics(PushCase):
         self.assertEqual(self.panel_values(), {"x_ui_panel_up": 0})
         self.assertEqual(self.requests, [])
 
+    def test_the_journal_names_why_the_panel_did_not_answer(self):
+        self.responses["server/status"] = (401, {})
+        _code, errors = self.collect()
+        self.assertIn("HTTP 401", errors)
+
+    def test_a_file_anyone_can_read_is_named_as_the_reason(self):
+        self.config.chmod(0o644)
+        _code, errors = self.collect()
+        self.assertIn("config permissions", errors)
+
     def test_errors_never_print_the_token_base_path_or_response_body(self):
         self.responses["server/status"] = (403, {"msg": "never-log-response-body"})
         code, errors = self.collect()
