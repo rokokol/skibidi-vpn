@@ -52,7 +52,9 @@ def node_problems(environ, now: float) -> list[str]:
         health = get(base, "/v1/health")
         answer = get(base, "/v1/samples", {"from": int(now) - window, "to": int(now) + 60})
     except urllib.error.HTTPError as error:
-        return [f"the metrics API of this node answered HTTP {error.code}: {error.reason}"]
+        # The error body is a file, and a handle left open leaks one per run
+        with error:
+            return [f"the metrics API of this node answered HTTP {error.code}: {error.reason}"]
     except (urllib.error.URLError, OSError, ValueError) as error:
         return [f"the metrics API of this node did not answer: {getattr(error, 'reason', error)}"]
     # Rows come oldest first, so a cut answer lacks exactly the newest ones

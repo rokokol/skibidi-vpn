@@ -11,6 +11,7 @@ Each test runs the real handler over a real socket against a throwaway store.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import importlib.util
 import json
@@ -57,7 +58,7 @@ class ApiCase(unittest.TestCase):
         self.server = None
 
     def write(self, rows, collected_through_us=None):
-        with self.module.connect() as connection:
+        with contextlib.closing(self.module.connect()) as connection, connection:
             connection.executemany(
                 "INSERT INTO samples (ts_us, metric, detail, value) VALUES (?, ?, ?, ?)", rows
             )

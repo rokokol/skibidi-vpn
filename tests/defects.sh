@@ -491,6 +491,13 @@ defect 'push/secret-in-target-file' "$PUSH_ENV" \
 SKIBIDI_PUSH_PASSWORD={{ backup_rest_password }}' \
   'the station password sits in a world-readable file'
 
+defect 'daily/error-answer-left-open' "$DAILY" \
+  '        with error:
+' \
+  '        if True:
+' \
+  'the daily check leaks a file handle for every failed answer from a node API'
+
 defect 'panel/credential-world-readable' "$PANEL_TASKS" \
   '    mode: "0600"' \
   '    mode: "0644"' \

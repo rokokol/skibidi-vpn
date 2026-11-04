@@ -10,6 +10,7 @@ unit's business and is proven in the VM scenario.
 from __future__ import annotations
 
 import contextlib
+import gc
 import importlib.util
 import io
 import os
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import warnings
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -78,7 +80,7 @@ class DailyCase(unittest.TestCase):
         }
         values.update(overrides or {})
         stamp = int((now - 60) * SECOND)
-        with self.metrics.connect() as connection:
+        with contextlib.closing(self.metrics.connect()) as connection, connection:
             connection.execute("DELETE FROM samples")
             connection.executemany(
                 "INSERT INTO samples (ts_us, metric, detail, value) VALUES (?, ?, ?, ?)",
@@ -210,6 +212,13 @@ class TestWhatCannotBeKnown(DailyCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("503", failures[0])
 
+    def test_the_error_answer_is_closed_rather_than_left_to_the_collector(self):
+        self.db.unlink()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            self.run_daily()
+            gc.collect()
+
     def test_a_cut_answer_is_refused_rather_than_read_as_the_newest_rows(self):
         # The rows come oldest first, so a cut drops exactly the newest ones
         self.metrics.SAMPLES_LIMIT = 2
@@ -219,7 +228,7 @@ class TestWhatCannotBeKnown(DailyCase):
 
     def test_an_empty_store_is_a_collector_that_never_ran(self):
         self.db.unlink()
-        with self.metrics.connect():
+        with contextlib.closing(self.metrics.connect()):
             pass
         code, _lines, failures = self.run_daily()
         self.assertEqual(code, 1)

@@ -37,7 +37,7 @@ UUID = "11111111-2222-3333-4444-555555555555"
 
 def make_panel_db() -> Path:
     path = Path(tempfile.mkdtemp(prefix="skibidi-panel-")) / "x-ui.db"
-    with sqlite3.connect(path) as db:
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
         db.executescript(f"""
             CREATE TABLE inbounds (id INTEGER PRIMARY KEY, up INTEGER, down INTEGER,
                 remark TEXT, enable INTEGER, port INTEGER, protocol TEXT,
@@ -64,32 +64,41 @@ class TestLabels(unittest.TestCase):
         self.assertEqual(report.client_label(None), "")
 
 
-class TestPanelDatabase(unittest.TestCase):
+class PanelCase(unittest.TestCase):
+    """A read-only handle the test closes, so the suite leaves no database open"""
+
+    def open_panel(self, path=None):
+        connection = report.open_panel_db(str(path or make_panel_db()))
+        self.addCleanup(connection.close)
+        return connection
+
+
+class TestPanelDatabase(PanelCase):
     """The panel is read through its database, so the shape everything else
     expects is produced here and nowhere else; these hold that shape against a
     synthetic database with the panel's own column names."""
 
     def test_inbounds_come_out_in_the_shape_the_reporter_reads(self):
-        db = report.open_panel_db(str(make_panel_db()))
+        db = self.open_panel()
         inbounds = report.db_inbounds(db)
         self.assertEqual(inbounds[0]["remark"], "SE-exit")
         self.assertEqual(inbounds[0]["clientStats"][0]["email"], "Grandmother")
         self.assertEqual(report.client_traffic(inbounds[0]["clientStats"][0]), (5, 7, 1735680000000))
 
     def test_nodes_and_their_state_need_no_token(self):
-        db = report.open_panel_db(str(make_panel_db()))
+        db = self.open_panel()
         nodes = report.db_nodes(db)
         self.assertEqual(nodes[0]["name"], "node-b")
         self.assertEqual(nodes[0]["status"], "online")
 
     def test_a_panel_without_node_mode_is_an_empty_fleet_not_an_error(self):
         path = make_panel_db()
-        with sqlite3.connect(path) as db:
+        with contextlib.closing(sqlite3.connect(path)) as db, db:
             db.execute("DROP TABLE nodes")
-        self.assertEqual(report.db_nodes(report.open_panel_db(str(path))), [])
+        self.assertEqual(report.db_nodes(self.open_panel(path)), [])
 
     def test_the_database_is_opened_read_only(self):
-        db = report.open_panel_db(str(make_panel_db()))
+        db = self.open_panel()
         with self.assertRaises(sqlite3.OperationalError):
             db.execute("DELETE FROM inbounds")
 
@@ -110,9 +119,9 @@ class TestGatherPanel(unittest.TestCase):
         self.assertIsNone(client["expires_days"])
 
 
-class TestTraffic(unittest.TestCase):
+class TestTraffic(PanelCase):
     def families(self, db):
-        connection = report.open_panel_db(str(db))
+        connection = self.open_panel(db)
         return report.traffic_families(report.panel_traffic(
             report.db_inbounds(connection), report.db_node_names(connection), "master-a"))
 
@@ -126,7 +135,7 @@ class TestTraffic(unittest.TestCase):
                       if pair[0]["direction"] == "down")
 
     def add_inbound(self, db, row_id, down, remark, node_id):
-        with sqlite3.connect(db) as connection:
+        with contextlib.closing(sqlite3.connect(db)) as connection, connection:
             connection.execute("INSERT INTO inbounds VALUES (?, 0, ?, ?, 1, ?, 'vless', '{}', ?)",
                                (row_id, down, remark, 9000 + row_id, node_id))
 
@@ -206,7 +215,7 @@ class TestTrafficCommand(CommandCase):
 
     def test_a_panel_with_no_traffic_yet_leaves_no_file(self):
         self.run_main("traffic")
-        with sqlite3.connect(self.config["panel"]["db"]) as db:
+        with contextlib.closing(sqlite3.connect(self.config["panel"]["db"])) as db, db:
             db.execute("DELETE FROM inbounds")
             db.execute("DELETE FROM client_traffics")
         self.assertEqual(self.run_main("traffic"), (0, "", ""))
@@ -231,7 +240,7 @@ class TestProblemsCommand(CommandCase):
         self.assertEqual(self.run_main("problems"), (0, "", ""))
 
     def test_an_offline_node_is_one_line(self):
-        with sqlite3.connect(self.config["panel"]["db"]) as db:
+        with contextlib.closing(sqlite3.connect(self.config["panel"]["db"])) as db, db:
             db.execute("UPDATE nodes SET status = 'offline'")
         code, out, _err = self.run_main("problems")
         self.assertEqual(code, 0)

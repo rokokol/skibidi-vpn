@@ -127,7 +127,7 @@ class TestWhatIsPushed(PushCase):
         import time
         self.rows = [("load1", "", 0.5)]
         self.collect()
-        with self.module.connect() as connection:
+        with contextlib.closing(self.module.connect()) as connection, connection:
             # Three hours old: outside the window, and inside the retention
             # that the collection would otherwise prune it by
             connection.execute("INSERT INTO samples VALUES (?, 'reboot_required', '', 1.0)",
@@ -143,7 +143,7 @@ class TestWhatIsPushed(PushCase):
         import time
         hour_ago = int((time.time() - 3000) * SECOND)
         self.rows = [("load1", "", 0.5)]
-        with self.module.connect() as connection:
+        with contextlib.closing(self.module.connect()) as connection, connection:
             connection.execute("INSERT INTO samples VALUES (?, 'pkg_updates', '', 9.0)", (hour_ago,))
         self.collect()
         self.assertEqual(self.pushed()["vpn_pending_updates"]["samples"], [({}, 9.0)])
@@ -432,7 +432,7 @@ class TestWhenItFails(PushCase):
         self.assertIn("push", errors)
         self.assertIn("401", errors)
         self.assertNotIn("wrong", errors)
-        with self.module.connect() as connection:
+        with contextlib.closing(self.module.connect()) as connection, connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM samples").fetchone()[0], 1)
 
     def test_a_station_that_does_not_answer_is_said_and_survived(self):

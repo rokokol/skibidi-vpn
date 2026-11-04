@@ -2,6 +2,15 @@
 extends: default
 
 rules:
+  # ansible-lint refuses a configuration that disagrees with its own yaml rule:
+  # a comment glued to its code and an octal written without its prefix are what
+  # that rule is for, so they are enforced here too
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
   # Comments here explain the failure a task prevents; wrapping them at 80
   # columns costs more readability than it buys
   line-length: disable

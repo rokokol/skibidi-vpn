@@ -1,3 +1,10 @@
 ---
 # The profile lives here so CI and a laptop disagree about nothing
 profile: production
+
+# inventory/nodes is a symlink into the private registry, and the vault beside it
+# is encrypted. Neither is this repository's YAML: lint reads the tree, found the
+# ciphertext, and failed the documented command on a file that is not here
+exclude_paths:
+  - vault.yml
+  - inventory/nodes/

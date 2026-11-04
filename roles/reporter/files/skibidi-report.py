@@ -240,26 +240,30 @@ def gather_panel(config: dict, now_us: int) -> dict:
     skibidi_problems.py read: which nodes are online, and how close each
     client is to its traffic limit and its expiry."""
     connection = open_panel_db(config["panel"]["db"])
-    data = {"nodes": [], "clients": []}
-    for node in db_nodes(connection):
-        data["nodes"].append({
-            "name": str(node.get("name") or node.get("remark") or ""),
-            "online": node.get("status") == "online",
-        })
-    now_ms = now_us // 1000
-    for inbound in db_inbounds(connection):
-        for client in inbound.get("clientStats") or []:
-            up, down, _last_online = client_traffic(client)
-            total_cap = int(client.get("total") or 0)
-            expiry_ms = int(client.get("expiryTime") or 0)
-            data["clients"].append({
-                "label": client_label(client.get("email")),
-                "enable": bool(client.get("enable", True)),
-                "cap_share": (up + down) / total_cap if total_cap else None,
-                "expires_days": (expiry_ms - now_ms) / 86400000 if expiry_ms > 0 else None,
+    try:
+        data = {"nodes": [], "clients": []}
+        for node in db_nodes(connection):
+            data["nodes"].append({
+                "name": str(node.get("name") or node.get("remark") or ""),
+                "online": node.get("status") == "online",
             })
-    connection.close()
-    return data
+        now_ms = now_us // 1000
+        for inbound in db_inbounds(connection):
+            for client in inbound.get("clientStats") or []:
+                up, down, _last_online = client_traffic(client)
+                total_cap = int(client.get("total") or 0)
+                expiry_ms = int(client.get("expiryTime") or 0)
+                data["clients"].append({
+                    "label": client_label(client.get("email")),
+                    "enable": bool(client.get("enable", True)),
+                    "cap_share": (up + down) / total_cap if total_cap else None,
+                    "expires_days": (expiry_ms - now_ms) / 86400000 if expiry_ms > 0 else None,
+                })
+        return data
+    finally:
+        # A table a release has not created yet raises in the loop, and the
+        # handle stays open without this
+        connection.close()
 
 
 def problems(config: dict) -> int:
