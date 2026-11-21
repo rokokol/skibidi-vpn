@@ -654,9 +654,10 @@ defect 'check/cause-not-recorded' "$CHECK" \
   'the record has messages and no causes, and the station sees one series named after a sentence'
 
 defect 'push/prefix-exemption-wide' "$PUSH" \
-  'UNPREFIXED = frozenset({"node_problem"})' \
-  'UNPREFIXED = frozenset({"node_problem", "problem"})' \
-  'a second name escapes the vpn_ prefix and collides with whatever else the station keeps'
+  'name in UNPREFIXED):' \
+  'name in UNPREFIXED or name.startswith("x_ui_")):' \
+  'an unlisted panel metric bypasses the exact list used by the station' \
+  expect caught test_no_other_name_escapes_the_prefix
 
 defect 'push/check-settings-dropped' "$PUSH_ENV" \
   'SKIBIDI_CHECK_RESULT={{ checker_result_file }}
