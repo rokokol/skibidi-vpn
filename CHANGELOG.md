@@ -6,6 +6,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Added
 
+- `firewall`: a `firewall_tcp_open_from` entry can name an ingress `interface` to keep a source allowlist off other interfaces. Use `--tags firewall-restricted,checker-scripts` to apply these rules and update the checker without a full deploy
 - `tor`: add the `tor_proxy` capability to offer a Tor SOCKS5 proxy over Tailscale Serve. Tor listens on loopback. Tailnet policy controls remote access, and the role refuses a conflicting Serve or Funnel entry
 - `metrics`: a node whose file sets `metrics_panel_enabled` adds `x_ui_panel_up`, `x_ui_xray_up` and `x_ui_online_clients` to the push it already makes. The token is a panel `monitor`-scope token from `vault.yml` under `metrics_panel_secrets`, written to `/etc/skibidi/panel-metrics.json` as root with mode 0600 and proved against the panel before the deploy finishes; a node that asks for it without a vault entry fails the deploy instead of pushing zeroes forever. The URL is the panel the roles placed, over TLS where the node has a certificate, authenticated by the digest of that certificate's leaf. A master's online count includes its child nodes, so the two are never added together, and an unknown core state or a stale online sample is left out rather than reported
 

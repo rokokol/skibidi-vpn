@@ -42,7 +42,10 @@
     port: "{{ item.0.port }}"
     proto: tcp
     src: "{{ item.1 }}"
+    interface: "{{ item.0.interface | default(omit) }}"
+    direction: "{{ 'in' if item.0.interface is defined else omit }}"
     comment: "{{ item.0.comment | default('skibidi-vpn restricted') }}"
+  tags: firewall-restricted
   loop: "{{ firewall_tcp_open_from | subelements('sources') }}"
   loop_control:
     label: "{{ item.0.port }} from {{ item.1 }}"

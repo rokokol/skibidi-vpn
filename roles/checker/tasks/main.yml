@@ -146,6 +146,7 @@
     mode: "0644"
 
 - name: Install the check and the alert
+  tags: checker-scripts
   ansible.builtin.template:
     src: "{{ item.src }}"
     dest: "{{ item.dest }}"
