@@ -1,0 +1,3 @@
+---
+tor_backend_port: 19050
+tor_tailnet_port: 9050

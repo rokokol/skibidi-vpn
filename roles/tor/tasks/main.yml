@@ -1,0 +1,79 @@
+---
+- name: Read the existing Serve configuration
+  ansible.builtin.command:
+    argv: [tailscale, serve, status, --json]
+  register: tor_serve_status
+  changed_when: false
+  check_mode: false
+
+- name: Find the TCP rule and any Funnel entry for this port
+  ansible.builtin.set_fact:
+    tor_serve_tcp: "{{ tor_serve_config.get('TCP', {}).get(tor_tailnet_port | string) }}"
+    tor_serve_funnel: "{{ tor_serve_config.get('AllowFunnel', {}) | select('search', ':' ~ tor_tailnet_port ~ '$') | list }}"
+  vars:
+    tor_serve_config: "{{ tor_serve_status.stdout | from_json }}"
+
+- name: Refuse to replace another service or publish Tor through Funnel
+  ansible.builtin.assert:
+    that:
+      - tor_serve_tcp is none or tor_serve_tcp == tor_serve_expected
+      - tor_serve_funnel | length == 0
+    fail_msg: >-
+      Serve port {{ tor_tailnet_port }} is in use or has a Funnel entry.
+      Remove the conflicting entry before this role can use the port.
+  vars:
+    tor_serve_expected:
+      TCPForward: "127.0.0.1:{{ tor_backend_port }}"
+
+- name: Install Tor without starting it on the package's default port
+  ansible.builtin.apt:
+    name: tor
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+    policy_rc_d: 101
+
+- name: Bind Tor to loopback so Serve owns the only remote path
+  ansible.builtin.template:
+    src: torrc.j2
+    dest: /etc/tor/torrc
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+    validate: /usr/bin/tor --verify-config -f %s
+  register: tor_config
+  when: not ansible_check_mode
+
+# The package generator adds the default instance to tor.service at boot.
+- name: Keep the package's Tor instance enabled at boot
+  ansible.builtin.systemd_service:
+    name: tor.service
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Apply the local-only configuration before publishing the endpoint
+  ansible.builtin.systemd_service:
+    name: tor@default.service
+    state: "{{ 'restarted' if tor_config.changed else 'started' }}"
+  when: not ansible_check_mode
+
+- name: Check that the local proxy answers before publishing it
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ tor_backend_port }}"
+    timeout: 30
+  when: not ansible_check_mode
+
+- name: Publish SOCKS through persistent tailnet-only TCP Serve
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - serve
+      - --bg
+      - "--tcp={{ tor_tailnet_port }}"
+      - "tcp://127.0.0.1:{{ tor_backend_port }}"
+  when: tor_serve_tcp is none
+  changed_when: true

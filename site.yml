@@ -8,6 +8,9 @@
     # with, and on a fresh node the daemon has to exist for that to be a check
     - tailscale
     - firewall
+    - role: tor
+      when: "'tor_proxy' in group_names"
+      tags: tor
     - xui
     # After the panel, which owns the directory the databases live in, and
     # before the checker, which watches the timer this role installs

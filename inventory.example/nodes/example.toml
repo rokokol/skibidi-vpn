@@ -10,6 +10,7 @@ ansible_user = "root"
 # ansible_become = true          # when logging in as a non-root user
 
 # Roles are selected by what a node declares itself to be, never by its name
+# Add "tor_proxy" to offer SOCKS5 via Tailscale Serve. Only tailnet policy controls access
 capabilities = ["master"]
 
 # Panel — consumed by the skill only; the inventory keeps it out of hostvars
