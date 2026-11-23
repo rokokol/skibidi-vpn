@@ -68,8 +68,8 @@ defect 'traffic/remark-collision' "$REPORT" \
   'two inbounds with one remark push the last one alone, or a body the station refuses'
 
 defect 'traffic/credential-in-label' "$REPORT" \
-  '        name = str(inbound.get("remark") or "") or' \
-  '        name = str(inbound.get("settings")) or' \
+  'str(inbound["remark"] or "")' \
+  'str(inbound["settings"])' \
   'every client UUID and subscription id goes to the station in a label'
 
 defect 'traffic/every-inbound-on-the-master' "$REPORT" \
