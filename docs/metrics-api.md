@@ -124,6 +124,7 @@ The newest sample of each series that is less than two hours old. A probe that s
 | Metric | Type | Labels |
 | --- | --- | --- |
 | `vpn_load1`, `vpn_memory_used_ratio`, `vpn_disk_used_ratio`, `vpn_disk_total_bytes`, `vpn_uptime_seconds` | gauge | none |
+| `vpn_cpu_busy_seconds_total`, `vpn_cpu_seconds_total` | counter | none |
 | `vpn_conntrack_used_ratio`, `vpn_conntrack_entries` | gauge | none |
 | `vpn_established_sockets`, `vpn_established_sockets_without_timer` | gauge | none |
 | `vpn_fail2ban_failed_total`, `vpn_fail2ban_banned_total` | counter | `jail` |
@@ -137,6 +138,8 @@ The newest sample of each series that is less than two hours old. A probe that s
 The station's alert rule reads `node_problem` without the `vpn_` prefix. It has one series of value `1` for each failure the last self-check recorded, with the help text "One unresolved problem this node reports of itself, by cause". `key` is the cause: letters, digits, dots, underscores and hyphens, the same on every run, with nothing in it that varies, so the station can keep one alert for it. `summary` is the first clause of the check's message, a short plain line that becomes the alert's subject. A record that is missing, or older than the check's silence limit, is one problem of its own with the key `check.record-missing` or `check.record-stale`. A clean check pushes no `node_problem` series at all, and a solved problem is missing from the next body. The quiet items of the daily check, such as pending updates and a required reboot, are not problems here. A failed check also triggers a push at once, from its alert unit, and mails only if that push fails
 
 The firewall drops are counted per interval in the store. The push turns them into a running total that the collector keeps in the store's state, because a dashboard cannot add up an interval count that arrives again with every push
+
+`vpn_cpu_seconds_total` is all CPU time the machine has had since boot, and `vpn_cpu_busy_seconds_total` is the part of it not spent idle. Busy is every state but idle, so iowait counts as busy and guest time, which the kernel already counts inside user and nice, is never added twice. The collector runs from a timer and never sees an interval go by, so the pair is the contract and the reader takes the rate of both: utilization is `rate(vpn_cpu_busy_seconds_total[1h]) / rate(vpn_cpu_seconds_total[1h])`. A reboot resets both, and a rate reads that as a counter reset
 
 ### Who knocks
 

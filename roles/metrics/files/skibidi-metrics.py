@@ -94,7 +94,9 @@ def read_first(path: str) -> str:
 
 # Metrics stored as the cumulative totals their owner keeps. The API turns
 # these into deltas; every other metric is a gauge, read as it was sampled
-COUNTERS = frozenset({"f2b_failed_total", "f2b_banned_total", "unit_restarts"})
+COUNTERS = frozenset(
+    {"cpu_busy_seconds", "cpu_seconds", "f2b_failed_total", "f2b_banned_total", "unit_restarts"}
+)
 
 # What a probe's detail column means, so the API can name it. A detail on a
 # metric missing here is still served, under the generic name "detail"
@@ -112,6 +114,8 @@ DIMENSIONS = {
 # never pushed, and a test holds this table to the probes below
 PROMETHEUS = {
     "load1": ("vpn_load1", "One-minute load average"),
+    "cpu_busy_seconds": ("vpn_cpu_busy_seconds_total", "CPU time not spent idle, in seconds"),
+    "cpu_seconds": ("vpn_cpu_seconds_total", "All CPU time the machine has had, in seconds"),
     "mem_used_ratio": ("vpn_memory_used_ratio", "Share of memory in use"),
     "disk_used_ratio": ("vpn_disk_used_ratio", "Share of the root file system in use"),
     "disk_total_bytes": ("vpn_disk_total_bytes", "Size of the root file system"),
@@ -142,13 +146,63 @@ def probe_load():
     yield "load1", "", float(read_first("/proc/loadavg").split()[0])
 
 
-def probe_memory():
+# The aggregate cpu line of /proc/stat, in the order the kernel prints it.
+# guest and guest_nice follow steal but are already inside user and nice, so a
+# sum that stops before them counts no time twice
+CPU_STATES = 8
+CPU_IDLE = 3
+
+
+def cpu_totals(text: str) -> tuple[float, float]:
+    """(busy, total) CPU seconds this machine has had, from /proc/stat.
+
+    Busy is every state but idle, the way a host dashboard plots it, so a CPU
+    waiting on a disk is busy. A collector that runs from a timer never sees
+    an interval go by, so the reader takes the rate of both counters"""
+    for line in text.splitlines():
+        if not line.startswith("cpu "):
+            continue
+        try:
+            states = [float(state) for state in line.split()[1:]]
+        except ValueError as error:
+            raise ValueError("the aggregate cpu line names a state that is not a number") from error
+        if len(states) < CPU_STATES:
+            raise ValueError(
+                f"the aggregate cpu line names {len(states)} states, not {CPU_STATES}"
+            )
+        total = sum(states[:CPU_STATES])
+        return total - states[CPU_IDLE], total
+    raise ValueError("the aggregate cpu line is missing from /proc/stat")
+
+
+def memory_ratio(text: str) -> float:
+    """The share of memory in use, by the kernel's own estimate: MemAvailable
+    is what it can still hand out, so reclaimable page cache is not full"""
     fields = {}
-    for line in Path("/proc/meminfo").read_text().splitlines():
+    for line in text.splitlines():
         key, _, rest = line.partition(":")
-        fields[key] = int(rest.split()[0])
-    total = fields["MemTotal"]
-    yield "mem_used_ratio", "", 1 - fields["MemAvailable"] / total
+        try:
+            fields[key] = int(rest.split()[0])
+        except (IndexError, ValueError) as error:
+            raise ValueError(f"/proc/meminfo names no number for {key}") from error
+    try:
+        total = fields["MemTotal"]
+        available = fields["MemAvailable"]
+    except KeyError as missing:
+        raise ValueError(f"/proc/meminfo has no {missing.args[0]}") from missing
+    if total <= 0:
+        raise ValueError("/proc/meminfo reports MemTotal as 0")
+    return 1 - available / total
+
+
+def probe_cpu():
+    busy, total = cpu_totals(Path("/proc/stat").read_text())
+    yield "cpu_busy_seconds", "", busy
+    yield "cpu_seconds", "", total
+
+
+def probe_memory():
+    yield "mem_used_ratio", "", memory_ratio(Path("/proc/meminfo").read_text())
 
 
 def probe_disk():
@@ -260,6 +314,7 @@ def probe_ufw_drops(connection: sqlite3.Connection, now_us: int):
 
 PROBES = [
     probe_load,
+    probe_cpu,
     probe_memory,
     probe_disk,
     probe_uptime,

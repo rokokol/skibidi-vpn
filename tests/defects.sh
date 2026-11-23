@@ -181,6 +181,28 @@ defect 'api/network' "$SERVICE" \
   'PrivateNetwork=no' \
   'a compromised request handler can open connections anywhere'
 
+# The machine's own numbers
+
+defect 'probe/cpu-iowait-as-idle' "$METRICS" \
+  '        return total - states[CPU_IDLE], total' \
+  '        return total - states[CPU_IDLE] - states[4], total' \
+  'a CPU waiting on a disk reads as idle, and a busy node shows no load'
+
+defect 'probe/cpu-guest-twice' "$METRICS" \
+  '        total = sum(states[:CPU_STATES])' \
+  '        total = sum(states)' \
+  'guest time is counted a second time and the total outruns the clock'
+
+defect 'probe/cpu-missing-as-zero' "$METRICS" \
+  '    raise ValueError("the aggregate cpu line is missing from /proc/stat")' \
+  '    return 0.0, 0.0' \
+  'a kernel file the probe cannot read reports an idle CPU instead of no data'
+
+defect 'probe/memory-missing-as-zero' "$METRICS" \
+  '        raise ValueError(f"/proc/meminfo has no {missing.args[0]}") from missing' \
+  '        available = total' \
+  'a kernel without MemAvailable reports memory nobody used instead of no value'
+
 # The retired SSH export
 
 defect 'cleanup/account-kept' "$LEGACY" \

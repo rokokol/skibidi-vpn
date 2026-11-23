@@ -538,6 +538,8 @@
           - verify_push_ok[-1].method == 'PUT'
           - "'vpn_load1 ' in verify_push_ok[-1].body"
           - "'vpn_disk_used_ratio ' in verify_push_ok[-1].body"
+          - "'vpn_cpu_busy_seconds_total ' in verify_push_ok[-1].body"
+          - "'vpn_cpu_seconds_total ' in verify_push_ok[-1].body"
           - "'node_problem' not in verify_push_ok[-1].body"
         fail_msg: "{{ verify_push | map(attribute='reason') | list }}"
 

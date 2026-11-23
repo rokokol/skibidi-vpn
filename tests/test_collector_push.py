@@ -109,6 +109,18 @@ class TestWhatIsPushed(PushCase):
         self.assertEqual(families["vpn_pending_updates"]["samples"], [({}, 4.0)])
         self.assertEqual(families["vpn_reboot_required"]["samples"], [({}, 1.0)])
 
+    def test_cpu_time_is_pushed_as_a_pair_of_counters(self):
+        # A collector that only samples cannot see an interval go by, so it
+        # reports the kernel's running totals and a dashboard divides one rate
+        # by the other
+        self.rows = [("cpu_busy_seconds", "", 120.0), ("cpu_seconds", "", 1000.0)]
+        self.collect()
+        families = self.pushed()
+        self.assertEqual(families["vpn_cpu_busy_seconds_total"]["type"], "counter")
+        self.assertEqual(families["vpn_cpu_busy_seconds_total"]["samples"], [({}, 120.0)])
+        self.assertEqual(families["vpn_cpu_seconds_total"]["type"], "counter")
+        self.assertEqual(families["vpn_cpu_seconds_total"]["samples"], [({}, 1000.0)])
+
     def test_every_pushed_name_is_prefixed_and_no_name_holds_the_node(self):
         self.rows = [("load1", "", 0.5), ("mem_used_ratio", "", 0.2), ("uptime_seconds", "", 9.0)]
         self.collect()
