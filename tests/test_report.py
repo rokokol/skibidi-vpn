@@ -42,6 +42,7 @@ def make_panel_db() -> Path:
             CREATE TABLE inbounds (id INTEGER PRIMARY KEY, up INTEGER, down INTEGER,
                 remark TEXT, enable INTEGER, port INTEGER, protocol TEXT,
                 settings TEXT, node_id INTEGER);
+            CREATE TABLE clients (id INTEGER PRIMARY KEY, email TEXT);
             CREATE TABLE client_traffics (id INTEGER PRIMARY KEY, inbound_id INTEGER,
                 email TEXT, up INTEGER, down INTEGER, total INTEGER,
                 expiry_time INTEGER, enable INTEGER, last_online INTEGER);
@@ -50,6 +51,7 @@ def make_panel_db() -> Path:
                 cpu_pct REAL, mem_pct REAL, panel_version TEXT, xray_version TEXT);
             INSERT INTO inbounds VALUES (1, 10, 20, 'SE-exit', 1, 443, 'vless',
                 '{{"clients": [{{"id": "{UUID}", "email": "Grandmother", "subId": "abcdef"}}]}}', NULL);
+            INSERT INTO clients VALUES (1, 'Grandmother');
             INSERT INTO client_traffics VALUES (1, 1, 'Grandmother', 5, 7, 100, 0, 1, 1735680000000);
             INSERT INTO nodes VALUES (1, 'node-b', '', 'online', 1700000000, 42, 1.0, 20.0, '3.7.0', '25.1.1');
         """)
@@ -122,8 +124,7 @@ class TestGatherPanel(unittest.TestCase):
 class TestTraffic(PanelCase):
     def families(self, db):
         connection = self.open_panel(db)
-        return report.traffic_families(report.panel_traffic(
-            report.db_inbounds(connection), report.db_node_names(connection), "master-a"))
+        return report.traffic_families(report.panel_traffic(connection, "master-a"))
 
     def by_name(self, families):
         return {item["name"]: item for item in families}
@@ -150,6 +151,17 @@ class TestTraffic(PanelCase):
         self.assertEqual(sorted(client["samples"], key=lambda pair: pair[0]["direction"]),
                          [({"client": "Grandmother", "direction": "down"}, 7.0),
                           ({"client": "Grandmother", "direction": "up"}, 5.0)])
+
+    def test_client_counters_survive_a_deleted_inbound(self):
+        db = make_panel_db()
+        with contextlib.closing(sqlite3.connect(db)) as connection, connection:
+            connection.execute("UPDATE client_traffics SET inbound_id = 3")
+            connection.execute("INSERT INTO client_traffics VALUES (2, 1, 'Deleted', 9, 10, 0, 0, 0, 0)")
+        clients = self.by_name(self.families(db))["vpn_client_traffic_bytes_total"]
+        self.assertCountEqual(clients["samples"], [
+            ({"client": "Grandmother", "direction": "up"}, 5.0),
+            ({"client": "Grandmother", "direction": "down"}, 7.0),
+        ])
 
     def test_an_inbound_is_named_by_the_node_it_runs_on(self):
         # The master's own inbounds have no node in the panel, and the rest

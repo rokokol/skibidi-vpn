@@ -17,7 +17,7 @@ No API and no token: the master holds the panel's database, and reading it is
 a file permission rather than a credential. The panel's CLI can only mint a
 token by rotating the one it owns, which would knock out whoever else held it;
 the database asks nothing of anyone. The columns read here (inbounds,
-client_traffics, nodes) are the ones the panel has carried since its first
+client_traffics, clients, nodes) are the ones the panel has carried since its first
 releases, and a release that moves one fails the deploy-time rehearsal, not a
 morning.
 """
@@ -82,16 +82,19 @@ def open_panel_db(path: str) -> sqlite3.Connection:
     return connection
 
 
+def db_inbound_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    return connection.execute(
+        "SELECT id, up, down, remark, enable, port, protocol, node_id FROM inbounds"
+    ).fetchall()
+
+
 def db_inbounds(connection: sqlite3.Connection) -> list[dict]:
     """Inbounds shaped the way the API served them, so everything downstream —
     the traffic totals, the client questions — reads one shape. A panel
     release that renames a column fails here, in one place, and the
     deploy-time rehearsal is where it fails."""
     inbounds = []
-    rows = connection.execute(
-        "SELECT id, up, down, remark, enable, port, protocol, node_id FROM inbounds"
-    ).fetchall()
-    for row in rows:
+    for row in db_inbound_rows(connection):
         stats = connection.execute(
             "SELECT email, up, down, total, expiry_time, enable, last_online "
             "FROM client_traffics WHERE inbound_id = ?",
@@ -155,7 +158,7 @@ def db_node_names(connection: sqlite3.Connection) -> dict:
     return {row["id"]: row["name"] for row in rows}
 
 
-def panel_traffic(inbounds: list[dict], node_names: dict, own_name: str) -> dict:
+def panel_traffic(connection: sqlite3.Connection, own_name: str) -> dict:
     """Cumulative bytes per inbound and per client, as the panel counts them.
 
     An inbound is named by the node it runs on and by its remark. The
@@ -164,18 +167,23 @@ def panel_traffic(inbounds: list[dict], node_names: dict, own_name: str) -> dict
     add up under it, because the station refuses a repeated label set.
     """
     traffic: dict = {"inbounds": {}, "clients": {}}
-    for inbound in inbounds:
-        node_id = inbound.get("nodeId")
+    node_names = db_node_names(connection)
+    for inbound in db_inbound_rows(connection):
+        node_id = inbound["node_id"]
         node = own_name if node_id is None else str(node_names.get(node_id, node_id))
-        name = str(inbound.get("remark") or "") or f"{inbound.get('protocol')}/{inbound.get('port')}"
+        name = str(inbound["remark"] or "") or f"{inbound['protocol']}/{inbound['port']}"
         total = traffic["inbounds"].setdefault((node, name), {"up": 0, "down": 0})
-        total["up"] += int(inbound.get("up") or 0)
-        total["down"] += int(inbound.get("down") or 0)
-        for client in inbound.get("clientStats") or []:
-            up, down, _last_online = client_traffic(client)
-            row = traffic["clients"].setdefault(client_label(client.get("email")), {"up": 0, "down": 0})
-            row["up"] += up
-            row["down"] += down
+        total["up"] += int(inbound["up"] or 0)
+        total["down"] += int(inbound["down"] or 0)
+    # A live client can keep its counter under an inbound ID the panel removed
+    for row in connection.execute(
+        "SELECT t.email, SUM(t.up) AS up, SUM(t.down) AS down FROM client_traffics AS t "
+        "WHERE EXISTS (SELECT 1 FROM clients AS c WHERE c.email = t.email) GROUP BY t.email"
+    ):
+        traffic["clients"][client_label(row["email"])] = {
+            "up": int(row["up"] or 0),
+            "down": int(row["down"] or 0),
+        }
     return traffic
 
 
@@ -211,9 +219,7 @@ def traffic(config: dict) -> int:
         connection = open_panel_db(config["panel"]["db"])
         try:
             own_name = os.environ.get("SKIBIDI_NODE_NAME") or socket.gethostname()
-            families = traffic_families(
-                panel_traffic(db_inbounds(connection), db_node_names(connection), own_name)
-            )
+            families = traffic_families(panel_traffic(connection, own_name))
         finally:
             connection.close()
     except (PanelError, sqlite3.Error) as error:
