@@ -1,0 +1,96 @@
+---
+- name: Check which configuration nginx serves
+  vars:
+    nginx_probe_echo: true
+    nginx_probe_echo_path: /molecule-nginx-echo
+    nginx_probe_echo_allow: [127.0.0.1]
+    verify_nginx_echo_url: "http://127.0.0.1{{ nginx_probe_echo_path }}"
+    verify_nginx_reload_command:
+      - busctl
+      - get-property
+      - org.freedesktop.systemd1
+      - /org/freedesktop/systemd1/unit/nginx_2eservice
+      - org.freedesktop.systemd1.Service
+      - ExecReload
+  block:
+    - name: Confirm the live configuration does not serve the echo probe yet
+      ansible.builtin.uri:
+        url: "{{ verify_nginx_echo_url }}"
+        follow_redirects: none
+        status_code: 301
+
+    - name: Deploy an echo probe on the live nginx service
+      ansible.builtin.include_role:
+        name: nginx
+        public: true
+
+    - name: Wait for nginx to serve the new echo probe
+      ansible.builtin.uri:
+        url: "{{ verify_nginx_echo_url }}"
+        follow_redirects: none
+        return_content: true
+      register: verify_nginx_echo
+      until: verify_nginx_echo.status == 200 and verify_nginx_echo.content | trim == '127.0.0.1'
+      retries: 3
+      delay: 1
+
+    - name: Record the last reload before another deploy
+      ansible.builtin.command:
+        argv: "{{ verify_nginx_reload_command }}"
+      register: verify_nginx_reload_before
+      changed_when: false
+
+    - name: Record the valid configuration checksum
+      ansible.builtin.stat:
+        path: "{{ nginx_conf_file }}"
+      register: verify_nginx_file_before
+
+    - name: Deploy the same configuration again
+      ansible.builtin.include_role:
+        name: nginx
+
+    - name: Check that an identical deploy did not reload nginx
+      ansible.builtin.command:
+        argv: "{{ verify_nginx_reload_command }}"
+      register: verify_nginx_reload_unchanged
+      changed_when: false
+      failed_when: >-
+        verify_nginx_reload_unchanged.rc != 0 or
+        verify_nginx_reload_unchanged.stdout != verify_nginx_reload_before.stdout
+
+    - name: Reject an invalid network and keep the valid configuration
+      block:
+        - name: Deploy an echo probe with an invalid allowlist entry
+          ansible.builtin.include_role:
+            name: nginx
+          vars:
+            nginx_probe_echo_allow: [not-an-address]
+
+        - name: Fail if the invalid configuration was accepted
+          ansible.builtin.fail:
+            msg: nginx accepted an invalid allowlist entry
+      rescue:
+        - name: Check that the role rejected the new configuration
+          ansible.builtin.assert:
+            that: "'nginx rejected the generated configuration' in ansible_failed_result.msg"
+
+    - name: Deliver any notification left by the failed deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check that the previous configuration was restored on disk
+      ansible.builtin.stat:
+        path: "{{ nginx_conf_file }}"
+      register: verify_nginx_file_after
+
+    - name: Check that the failed deploy did not reload nginx
+      ansible.builtin.command:
+        argv: "{{ verify_nginx_reload_command }}"
+      register: verify_nginx_reload_invalid
+      changed_when: false
+      failed_when: >-
+        verify_nginx_reload_invalid.rc != 0 or
+        verify_nginx_reload_invalid.stdout != verify_nginx_reload_before.stdout
+
+    - name: Require the last valid file to remain on disk
+      ansible.builtin.assert:
+        that: verify_nginx_file_after.stat.checksum == verify_nginx_file_before.stat.checksum

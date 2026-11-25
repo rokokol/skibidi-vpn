@@ -20,7 +20,7 @@
     path: /etc/nginx/sites-enabled/default
     state: absent
   when: nginx_take_over_default_site
-  notify: Reload nginx
+  register: nginx_packaged_site
 
 # `validate` cannot be used here. It runs the command against the temporary file
 # in isolation, and a fragment from conf.d is not a configuration on its own: it
@@ -39,10 +39,11 @@
         backup: true
       register: nginx_written
 
-    - name: Check the configuration nginx would actually load
+    - name: Approve the configuration for reload only if it passes validation
       ansible.builtin.command:
         argv: [nginx, -t]
-      changed_when: false
+      changed_when: nginx_written.changed or nginx_packaged_site.changed
+      notify: Reload nginx
 
   rescue:
     - name: Put the previous configuration back

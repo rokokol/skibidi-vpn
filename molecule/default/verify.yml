@@ -349,6 +349,9 @@
         that: not verify_packaged_site.stat.exists
         fail_msg: the packaged nginx site is still enabled and also claims port 80
 
+    - name: Verify nginx reload and rollback
+      ansible.builtin.import_tasks: tasks/verify-nginx.yml
+
     - name: Read the panel binding out of its database
       ansible.builtin.command:
         argv:

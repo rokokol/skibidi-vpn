@@ -48,6 +48,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ### Fixed
 
+- The nginx role reloads nginx after it validates a change. It restores the previous file if validation fails, without a reload
 - VPN traffic metrics keep counters for clients that still exist after removal of their former inbound
 - `common`: a node that cannot resolve its own name gets it on `127.0.1.1` in `/etc/hosts`, so sudo stops warning `unable to resolve host` on every call. A cloud image can leave its own name there. A node that already resolves its name keeps its file as it is, including a file that cloud-init writes again on every boot
 
